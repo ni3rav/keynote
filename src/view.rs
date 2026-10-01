@@ -21,6 +21,9 @@ pub struct NativeView {
 pub struct DeckAsset {
     pub status: u16,
     pub content_type: &'static str,
+    /// `bytes start-end/total` when this is a partial body.
+    pub content_range: Option<String>,
+    pub accept_ranges: bool,
     pub body: Vec<u8>,
 }
 
@@ -52,27 +55,29 @@ pub fn prepare_native_view(file: &Path) -> Result<NativeView, String> {
 }
 
 /// Serve the rendered deck or a file under its root. `..` is rejected.
-pub fn deck_asset(view: &NativeView, request_path: &str) -> DeckAsset {
+/// `range` is an HTTP `Range` header (`bytes=start-end`); video playback
+/// seeks with it.
+pub fn deck_asset(view: &NativeView, request_path: &str, range: Option<&str>) -> DeckAsset {
     let rel = request_rel(request_path);
     if rel.is_empty() || rel == "index.html" {
         return DeckAsset {
             status: 200,
             content_type: "text/html; charset=utf-8",
+            content_range: None,
+            accept_ranges: false,
             body: view.html.as_bytes().to_vec(),
         };
     }
     match safe_join(&view.root, &rel) {
         Ok(path) => match std::fs::read(&path) {
-            Ok(body) => DeckAsset {
-                status: 200,
-                content_type: content_type(&path),
-                body,
-            },
+            Ok(body) => file_asset(content_type(&path), body, range),
             Err(_) => missing(),
         },
         Err(JoinErr::Forbidden) => DeckAsset {
             status: 403,
             content_type: "text/plain; charset=utf-8",
+            content_range: None,
+            accept_ranges: false,
             body: b"forbidden".to_vec(),
         },
         Err(JoinErr::Missing) => missing(),
@@ -95,6 +100,11 @@ fn open_window(view: NativeView) -> Result<(), String> {
         .map_err(|e| format!("view url: {e}"))?;
     tauri::Builder::default()
         .register_uri_scheme_protocol("deck", move |_ctx, request| {
+            let range = request
+                .headers()
+                .get(tauri::http::header::RANGE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             let asset = deck_asset(
                 &NativeView {
                     title: String::new(),
@@ -102,17 +112,23 @@ fn open_window(view: NativeView) -> Result<(), String> {
                     root: root.clone(),
                 },
                 request.uri().path(),
+                range.as_deref(),
             );
-            tauri::http::Response::builder()
+            let mut response = tauri::http::Response::builder()
                 .status(asset.status)
-                .header(tauri::http::header::CONTENT_TYPE, asset.content_type)
-                .body(asset.body)
-                .unwrap_or_else(|_| {
-                    tauri::http::Response::builder()
-                        .status(500)
-                        .body(Vec::new())
-                        .expect("empty response")
-                })
+                .header(tauri::http::header::CONTENT_TYPE, asset.content_type);
+            if asset.accept_ranges {
+                response = response.header(tauri::http::header::ACCEPT_RANGES, "bytes");
+            }
+            if let Some(content_range) = &asset.content_range {
+                response = response.header(tauri::http::header::CONTENT_RANGE, content_range);
+            }
+            response.body(asset.body).unwrap_or_else(|_| {
+                tauri::http::Response::builder()
+                    .status(500)
+                    .body(Vec::new())
+                    .expect("empty response")
+            })
         })
         .setup(move |app| {
             tauri::WebviewWindowBuilder::new(app, "view", tauri::WebviewUrl::External(url))
@@ -137,8 +153,68 @@ fn missing() -> DeckAsset {
     DeckAsset {
         status: 404,
         content_type: "text/plain; charset=utf-8",
+        content_range: None,
+        accept_ranges: false,
         body: b"not found".to_vec(),
     }
+}
+
+fn file_asset(content_type: &'static str, body: Vec<u8>, range: Option<&str>) -> DeckAsset {
+    let Some(spec) = range.and_then(|h| h.trim().strip_prefix("bytes=")) else {
+        return DeckAsset {
+            status: 200,
+            content_type,
+            content_range: None,
+            accept_ranges: true,
+            body,
+        };
+    };
+    let total = body.len();
+    let Some((start, end)) = parse_byte_range(spec, total) else {
+        return DeckAsset {
+            status: 416,
+            content_type: "text/plain; charset=utf-8",
+            content_range: Some(format!("bytes */{total}")),
+            accept_ranges: true,
+            body: b"range not satisfiable".to_vec(),
+        };
+    };
+    DeckAsset {
+        status: 206,
+        content_type,
+        content_range: Some(format!("bytes {start}-{end}/{total}")),
+        accept_ranges: true,
+        body: body[start..=end].to_vec(),
+    }
+}
+
+/// `start-end`, `start-`, or `-suffix` against a body of `total` bytes.
+fn parse_byte_range(spec: &str, total: usize) -> Option<(usize, usize)> {
+    if total == 0 || spec.contains(',') {
+        return None;
+    }
+    let (start_s, end_s) = spec.split_once('-')?;
+    if start_s.is_empty() {
+        let suffix: usize = end_s.parse().ok()?;
+        if suffix == 0 || suffix > total {
+            return None;
+        }
+        return Some((total - suffix, total - 1));
+    }
+    let start: usize = start_s.parse().ok()?;
+    if start >= total {
+        return None;
+    }
+    let end = if end_s.is_empty() {
+        total - 1
+    } else {
+        let end: usize = end_s.parse().ok()?;
+        end.min(total - 1)
+    };
+    if end < start {
+        return None;
+    }
+    Some((start, end))
 }
 
 fn deck_root(file: &Path) -> PathBuf {
@@ -288,23 +364,40 @@ mod tests {
         std::fs::write(dir.join("images").join("pic.png"), b"PNGDATA").unwrap();
         let view = prepare_native_view(&path).unwrap();
 
-        let index = deck_asset(&view, "/");
+        let index = deck_asset(&view, "/", None);
         assert_eq!(index.status, 200);
         assert!(index.content_type.starts_with("text/html"));
         assert!(std::str::from_utf8(&index.body).unwrap().contains("Slide"));
 
-        let media = deck_asset(&view, "/images/pic.png");
+        let media = deck_asset(&view, "/images/pic.png", None);
         assert_eq!(media.status, 200);
+        assert!(media.accept_ranges);
         assert_eq!(media.content_type, "image/png");
         assert_eq!(media.body, b"PNGDATA");
 
-        let encoded = deck_asset(&view, "/images/%70ic.png");
+        let partial = deck_asset(&view, "/images/pic.png", Some("bytes=0-2"));
+        assert_eq!(partial.status, 206);
+        assert_eq!(partial.body, b"PNG");
+        assert_eq!(
+            partial.content_range.as_deref(),
+            Some("bytes 0-2/7")
+        );
+
+        let tail = deck_asset(&view, "/images/pic.png", Some("bytes=4-"));
+        assert_eq!(tail.status, 206);
+        assert_eq!(tail.body, b"ATA");
+
+        let encoded = deck_asset(&view, "/images/%70ic.png", None);
         assert_eq!(encoded.status, 200);
         assert_eq!(encoded.body, b"PNGDATA");
 
-        assert_eq!(deck_asset(&view, "/../Cargo.toml").status, 403);
-        assert_eq!(deck_asset(&view, "/%2e%2e/Cargo.toml").status, 403);
-        assert_eq!(deck_asset(&view, "/images/missing.png").status, 404);
+        assert_eq!(deck_asset(&view, "/../Cargo.toml", None).status, 403);
+        assert_eq!(deck_asset(&view, "/%2e%2e/Cargo.toml", None).status, 403);
+        assert_eq!(deck_asset(&view, "/images/missing.png", None).status, 404);
+        assert_eq!(
+            deck_asset(&view, "/images/pic.png", Some("bytes=99-100")).status,
+            416
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

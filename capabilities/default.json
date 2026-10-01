@@ -7,6 +7,13 @@
     "allow-save-deck",
     "allow-render-deck",
     "allow-move-slide",
-    "allow-replace-slide"
+    "allow-replace-slide",
+    "allow-patch-slide",
+    "allow-duplicate-slide",
+    "allow-delete-slide",
+    "allow-insert-media",
+    "allow-focus-slide",
+    "allow-pick-deck",
+    "allow-create-deck"
   ]
 }

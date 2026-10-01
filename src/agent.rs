@@ -62,8 +62,19 @@ CLI (exit 0 ok / 1 fail, errors on stderr, --json everywhere):
   keynote skill install                   # install to ~/.agents/skills/keynote/
   keynote open talk.md                    # export HTML, open browser, present in terminal
   keynote present talk.md                 # terminal
-  keynote view talk.md                    # native window (cargo build --features native-view)
-  keynote view talk.md --editor           # Visual / Overview / Markdown, drag to reorder
+  keynote                                 # open the editor (needs --features native-view)
+  keynote talk.md                         # open this deck in the editor
+  keynote install                         # ~/.local/bin/keynote and a desktop launcher
+  keynote view talk.md --editor           # Visual / Overview / Markdown
+
+Speaker notes, alignment, and backgrounds live in the slide and are not drawn as copy:
+
+  @align center
+  @valign middle
+  @background color=#112233
+  :::notes
+  Say this out loud.
+  :::
 "#;
 
 pub const SKILL_TEXT: &str = r#"---

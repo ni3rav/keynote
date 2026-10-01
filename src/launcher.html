@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>keynote</title>
+<style>
+:root { color-scheme: dark; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; align-items: center; justify-content: center;
+  background: #1a1b26; color: #c0caf5;
+  font-family: "Inter", system-ui, sans-serif;
+}
+main { width: min(440px, calc(100% - 48px)); }
+h1 { margin: 0 0 8px; font-size: 32px; font-weight: 600; }
+p { margin: 0 0 24px; color: #a9b1d6; line-height: 1.5; }
+button {
+  display: block; width: 100%; margin: 0 0 10px; padding: 12px 14px;
+  border-radius: 8px; border: 1px solid #292e42; background: #24283b;
+  color: #c0caf5; font: inherit; text-align: left; cursor: pointer;
+}
+button:hover { border-color: #7aa2f7; }
+button strong { display: block; color: #c0caf5; }
+button span { color: #565f89; font-size: 13px; }
+#status { min-height: 1.2em; color: #f7768e; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>keynote</h1>
+  <p>Markdown slides. Open a deck or start a new one.</p>
+  <button id="open" type="button"><strong>Open deck</strong><span>Choose a .md file</span></button>
+  <button id="create" type="button"><strong>New deck</strong><span>Tokyo Night, one title slide</span></button>
+  <div id="status"></div>
+</main>
+<script>
+function explain(e) {
+  if (!e || e === 'cancelled') return '';
+  if (typeof e === 'string') return e;
+  return e.message || String(e);
+}
+async function go(cmd) {
+  try {
+    await window.__TAURI_INTERNALS__.invoke(cmd, {});
+  } catch (e) {
+    document.getElementById('status').textContent = explain(e);
+  }
+}
+document.getElementById('open').onclick = () => go('pick_deck');
+document.getElementById('create').onclick = () => go('create_deck');
+</script>
+</body>
+</html>

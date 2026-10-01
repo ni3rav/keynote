@@ -96,7 +96,14 @@ pub fn save_markdown(path: &Path, markdown: &str) -> Result<(), String> {
 pub struct SlideCard {
     pub title: String,
     pub source: String,
+    /// Slide copy without notes, alignment, or background directives.
+    pub body: String,
     pub html: String,
+    pub notes: String,
+    pub align: String,
+    pub valign: String,
+    pub background: String,
+    pub layout: String,
 }
 
 /// Full deck plus per-slide cards, so Visual, Overview, and Markdown share one render.
@@ -178,6 +185,138 @@ pub fn reorder_markdown(markdown: &str, from: usize, to: usize) -> Result<String
     Ok(join_editable(&prefix, &slides))
 }
 
+pub fn duplicate_slide_markdown(markdown: &str, index: usize) -> Result<String, String> {
+    let (prefix, mut slides) = split_editable(markdown)?;
+    if index >= slides.len() {
+        return Err("slide index out of range".into());
+    }
+    let copy = slides[index].clone();
+    slides.insert(index + 1, copy);
+    Ok(join_editable(&prefix, &slides))
+}
+
+pub fn delete_slide_markdown(markdown: &str, index: usize) -> Result<String, String> {
+    let (prefix, mut slides) = split_editable(markdown)?;
+    if slides.len() == 1 {
+        return Err("a deck needs at least one slide".into());
+    }
+    if index >= slides.len() {
+        return Err("slide index out of range".into());
+    }
+    slides.remove(index);
+    Ok(join_editable(&prefix, &slides))
+}
+
+pub fn patch_slide_markdown(
+    markdown: &str,
+    index: usize,
+    notes: Option<&str>,
+    align: Option<&str>,
+    valign: Option<&str>,
+    background: Option<&str>,
+    layout: Option<&str>,
+) -> Result<String, String> {
+    let (prefix, mut slides) = split_editable(markdown)?;
+    if index >= slides.len() {
+        return Err("slide index out of range".into());
+    }
+    if let Some(layout) = layout {
+        slides[index] = crate::slide_meta::set_layout_token(&slides[index], layout)?;
+    }
+    let mut meta = crate::slide_meta::parse_meta(&slides[index]);
+    if let Some(notes) = notes {
+        meta.notes = notes.to_string();
+    }
+    if let Some(align) = align {
+        meta.align = align.to_string();
+    }
+    if let Some(valign) = valign {
+        meta.valign = valign.to_string();
+    }
+    if let Some(background) = background {
+        meta.background = if background == "none" {
+            String::new()
+        } else {
+            background.to_string()
+        };
+    }
+    slides[index] = crate::slide_meta::with_meta(&slides[index], &meta);
+    Ok(join_editable(&prefix, &slides))
+}
+
+/// Copy a local image or video next to the deck and attach it to one slide.
+pub fn attach_media(
+    deck_file: &Path,
+    markdown: &str,
+    index: usize,
+    src_file: &Path,
+) -> Result<String, String> {
+    if !src_file.is_file() {
+        return Err(format!("not a file: {}", src_file.display()));
+    }
+    let ext = src_file
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let video = matches!(ext.as_str(), "mp4" | "webm" | "mov" | "mkv" | "ogv");
+    let image = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg");
+    if !video && !image {
+        return Err(format!("unsupported media type .{ext}"));
+    }
+    let folder = if video { "videos" } else { "images" };
+    let root = deck_file
+        .parent()
+        .map(|p| {
+            if p.as_os_str().is_empty() {
+                PathBuf::from(".")
+            } else {
+                p.to_path_buf()
+            }
+        })
+        .unwrap_or_else(|| PathBuf::from("."));
+    let dir = root.join(folder);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let name = src_file
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| format!("media.{ext}"));
+    let dest = unique_dest(&dir, &name);
+    std::fs::copy(src_file, &dest).map_err(|e| format!("copy media: {e}"))?;
+    let stored = dest
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or(name);
+    let (prefix, mut slides) = split_editable(markdown)?;
+    if index >= slides.len() {
+        return Err("slide index out of range".into());
+    }
+    slides[index] = crate::slide_meta::set_media_line(&slides[index], &stored, video);
+    Ok(join_editable(&prefix, &slides))
+}
+
+fn unique_dest(dir: &Path, name: &str) -> PathBuf {
+    let candidate = dir.join(name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let stem = Path::new(name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "media".into());
+    let ext = Path::new(name)
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
+    for n in 2..10_000 {
+        let next = dir.join(format!("{stem}-{n}{ext}"));
+        if !next.exists() {
+            return next;
+        }
+    }
+    dir.join(format!("{stem}-copy{ext}"))
+}
+
 /// Replace one slide body. An empty body is refused so the slide is not dropped.
 pub fn replace_slide_markdown(
     markdown: &str,
@@ -191,7 +330,8 @@ pub fn replace_slide_markdown(
     if index >= slides.len() {
         return Err("slide index out of range".into());
     }
-    slides[index] = slide.trim().to_string();
+    let meta = crate::slide_meta::parse_meta(&slides[index]);
+    slides[index] = crate::slide_meta::with_meta(slide, &meta);
     Ok(join_editable(&prefix, &slides))
 }
 
@@ -206,13 +346,32 @@ pub fn render_model(markdown: &str, root: &Path) -> Result<DeckRender, String> {
         .slides
         .iter()
         .enumerate()
-        .map(|(i, s)| SlideCard {
-            title: s
-                .title
-                .clone()
-                .unwrap_or_else(|| format!("Slide {}", i + 1)),
-            source: blocks.get(i).cloned().unwrap_or_else(|| s.source.clone()),
-            html: export::slide_html(&deck, root, i, None, None),
+        .map(|(i, s)| {
+            let source = blocks.get(i).cloned().unwrap_or_else(|| s.source.clone());
+            let meta = crate::slide_meta::parse_meta(&source);
+            let layout = s
+                .media
+                .first()
+                .map(|m| match m.layout {
+                    crate::deck::MediaLayout::Fit => "fit",
+                    crate::deck::MediaLayout::Span => "span",
+                })
+                .unwrap_or("")
+                .to_string();
+            SlideCard {
+                title: s
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| format!("Slide {}", i + 1)),
+                body: crate::slide_meta::visible_body(&source),
+                source,
+                html: export::slide_html(&deck, root, i, None, None),
+                notes: meta.notes,
+                align: meta.align,
+                valign: meta.valign,
+                background: meta.background,
+                layout,
+            }
         })
         .collect();
     Ok(DeckRender {
@@ -308,6 +467,11 @@ pub fn open(file: &Path, editor: bool) -> Result<(), String> {
     open_window(view)
 }
 
+/// Open the graphical client with no deck yet.
+pub fn open_launcher() -> Result<(), String> {
+    launcher_window()
+}
+
 #[cfg(feature = "native-view")]
 fn open_window(view: NativeView) -> Result<(), String> {
     let title = view.title.clone();
@@ -315,17 +479,30 @@ fn open_window(view: NativeView) -> Result<(), String> {
     let html = view.html.clone();
     let shell = view.shell.clone();
     let path = view.path.clone();
+    let source = view.source.clone();
     let url: url::Url = native_index_url()
         .parse()
         .map_err(|e| format!("view url: {e}"))?;
     tauri::Builder::default()
-        .manage(EditorState { path, root: root.clone() })
+        .manage(EditorState {
+            path,
+            root: root.clone(),
+            live: std::sync::Mutex::new(source),
+            index: std::sync::Mutex::new(0),
+        })
         .invoke_handler(tauri::generate_handler![
             preview_html,
             save_deck,
             render_deck,
             move_slide,
-            replace_slide
+            replace_slide,
+            patch_slide,
+            duplicate_slide,
+            delete_slide,
+            insert_media,
+            focus_slide,
+            pick_deck,
+            create_deck
         ])
         .register_uri_scheme_protocol("deck", move |_ctx, request| {
             let range = request
@@ -363,10 +540,35 @@ fn open_window(view: NativeView) -> Result<(), String> {
             })
         })
         .setup(move |app| {
-            tauri::WebviewWindowBuilder::new(app, "view", tauri::WebviewUrl::External(url))
+            let win = tauri::WebviewWindowBuilder::new(app, "view", tauri::WebviewUrl::External(url))
                 .title(title)
                 .inner_size(1440.0, 810.0)
                 .build()?;
+            let target = win.clone();
+            win.on_window_event(move |event| {
+                use tauri::{DragDropEvent, Manager, WindowEvent};
+                let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event else {
+                    return;
+                };
+                let Some(file) = paths.first() else {
+                    return;
+                };
+                let state = target.state::<EditorState>();
+                let markdown = state.live.lock().map(|g| g.clone()).unwrap_or_default();
+                let index = state.index.lock().map(|g| *g).unwrap_or(0);
+                let Ok(next) = attach_media(&state.path, &markdown, index, &file) else {
+                    return;
+                };
+                let Ok(rendered) = render_model(&next, &state.root) else {
+                    return;
+                };
+                if let Ok(mut live) = state.live.lock() {
+                    *live = rendered.markdown.clone();
+                }
+                if let Ok(json) = serde_json::to_string(&rendered) {
+                    let _ = target.eval(format!("window.onExternal && window.onExternal({json})"));
+                }
+            });
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -377,6 +579,17 @@ fn open_window(view: NativeView) -> Result<(), String> {
 struct EditorState {
     path: PathBuf,
     root: PathBuf,
+    live: std::sync::Mutex<String>,
+    index: std::sync::Mutex<usize>,
+}
+
+#[cfg(feature = "native-view")]
+fn publish(state: &EditorState, markdown: String) -> Result<DeckRender, String> {
+    let rendered = render_model(&markdown, &state.root)?;
+    if let Ok(mut live) = state.live.lock() {
+        *live = rendered.markdown.clone();
+    }
+    Ok(rendered)
 }
 
 #[cfg(feature = "native-view")]
@@ -394,7 +607,7 @@ fn save_deck(markdown: String, state: tauri::State<'_, EditorState>) -> Result<(
 #[cfg(feature = "native-view")]
 #[tauri::command]
 fn render_deck(markdown: String, state: tauri::State<'_, EditorState>) -> Result<DeckRender, String> {
-    render_model(&markdown, &state.root)
+    publish(&state, markdown)
 }
 
 #[cfg(feature = "native-view")]
@@ -406,7 +619,7 @@ fn move_slide(
     state: tauri::State<'_, EditorState>,
 ) -> Result<DeckRender, String> {
     let markdown = reorder_markdown(&markdown, from, to)?;
-    render_model(&markdown, &state.root)
+    publish(&state, markdown)
 }
 
 #[cfg(feature = "native-view")]
@@ -418,11 +631,174 @@ fn replace_slide(
     state: tauri::State<'_, EditorState>,
 ) -> Result<DeckRender, String> {
     let markdown = replace_slide_markdown(&markdown, index, &slide)?;
-    render_model(&markdown, &state.root)
+    publish(&state, markdown)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn patch_slide(
+    markdown: String,
+    index: usize,
+    notes: Option<String>,
+    align: Option<String>,
+    valign: Option<String>,
+    background: Option<String>,
+    layout: Option<String>,
+    state: tauri::State<'_, EditorState>,
+) -> Result<DeckRender, String> {
+    let markdown = patch_slide_markdown(
+        &markdown,
+        index,
+        notes.as_deref(),
+        align.as_deref(),
+        valign.as_deref(),
+        background.as_deref(),
+        layout.as_deref(),
+    )?;
+    publish(&state, markdown)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn duplicate_slide(
+    markdown: String,
+    index: usize,
+    state: tauri::State<'_, EditorState>,
+) -> Result<DeckRender, String> {
+    let markdown = duplicate_slide_markdown(&markdown, index)?;
+    publish(&state, markdown)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn delete_slide(
+    markdown: String,
+    index: usize,
+    state: tauri::State<'_, EditorState>,
+) -> Result<DeckRender, String> {
+    let markdown = delete_slide_markdown(&markdown, index)?;
+    publish(&state, markdown)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn focus_slide(index: usize, state: tauri::State<'_, EditorState>) -> Result<(), String> {
+    if let Ok(mut g) = state.index.lock() {
+        *g = index;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn insert_media(
+    markdown: String,
+    index: usize,
+    kind: String,
+    state: tauri::State<'_, EditorState>,
+) -> Result<DeckRender, String> {
+    let (label, exts): (&str, &[&str]) = if kind == "video" {
+        ("Video", &["mp4", "webm", "mov", "mkv", "ogv"])
+    } else {
+        ("Image", &["png", "jpg", "jpeg", "webp", "gif", "svg"])
+    };
+    let file = rfd::FileDialog::new()
+        .set_title(format!("Insert {label}"))
+        .add_filter(label, exts)
+        .pick_file()
+        .ok_or_else(|| "cancelled".to_string())?;
+    let markdown = attach_media(&state.path, &markdown, index, &file)?;
+    publish(&state, markdown)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn pick_deck(app: tauri::AppHandle) -> Result<(), String> {
+    let file = rfd::FileDialog::new()
+        .set_title("Open deck")
+        .add_filter("Markdown", &["md", "markdown"])
+        .pick_file()
+        .ok_or_else(|| "cancelled".to_string())?;
+    reopen(&app, &file)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn create_deck(app: tauri::AppHandle) -> Result<(), String> {
+    let file = rfd::FileDialog::new()
+        .set_title("New deck")
+        .add_filter("Markdown", &["md"])
+        .set_file_name("deck.md")
+        .save_file()
+        .ok_or_else(|| "cancelled".to_string())?;
+    if !file.exists() {
+        let body = "---\ntitle: Untitled\nauthor: You\ntheme: tokyo-night\nfont: system-ui\n---\n\n# Untitled\n\nStart writing\n";
+        if let Some(parent) = file.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&file, body).map_err(|e| format!("write {}: {e}", file.display()))?;
+    }
+    reopen(&app, &file)
+}
+
+#[cfg(feature = "native-view")]
+fn launcher_window() -> Result<(), String> {
+    let page = include_str!("launcher.html").to_string();
+    let url: url::Url = native_index_url()
+        .parse()
+        .map_err(|e| format!("view url: {e}"))?;
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![pick_deck, create_deck])
+        .register_uri_scheme_protocol("deck", move |_ctx, request| {
+            let path = request.uri().path();
+            let (status, body) = if path.ends_with("app.html") || path == "/" {
+                (200, page.as_bytes().to_vec())
+            } else {
+                (404, b"not found".to_vec())
+            };
+            tauri::http::Response::builder()
+                .status(status)
+                .header(tauri::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .body(body)
+                .unwrap_or_else(|_| {
+                    tauri::http::Response::builder()
+                        .status(500)
+                        .body(Vec::new())
+                        .expect("empty response")
+                })
+        })
+        .setup(move |app| {
+            tauri::WebviewWindowBuilder::new(app, "view", tauri::WebviewUrl::External(url))
+                .title("keynote")
+                .inner_size(720.0, 480.0)
+                .build()?;
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(feature = "native-view")]
+fn reopen(app: &tauri::AppHandle, file: &Path) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("current exe: {e}"))?;
+    std::process::Command::new(exe)
+        .arg(file)
+        .spawn()
+        .map_err(|e| format!("open {}: {e}", file.display()))?;
+    app.exit(0);
+    Ok(())
 }
 
 #[cfg(not(feature = "native-view"))]
 fn open_window(_view: NativeView) -> Result<(), String> {
+    Err(
+        "native view is compiled out; rebuild with: cargo build --features native-view"
+            .into(),
+    )
+}
+
+#[cfg(not(feature = "native-view"))]
+fn launcher_window() -> Result<(), String> {
     Err(
         "native view is compiled out; rebuild with: cargo build --features native-view"
             .into(),
@@ -719,6 +1095,43 @@ mod tests {
         let deck = crate::deck::Deck::from_markdown(&edited);
         assert_eq!(deck.slides[0].title.as_deref(), Some("B2"));
         assert!(replace_slide_markdown(md, 0, "  \n").is_err());
+    }
+
+    #[test]
+    fn notes_survive_reorder_and_stay_off_the_slide_copy() {
+        let md = "---\ntitle: T\n---\n\n# A\n\n:::notes\nSecret line\n:::\n\n---\n\n# B\n";
+        let out = reorder_markdown(md, 0, 1).unwrap();
+        let deck = crate::deck::Deck::from_markdown(&out);
+        assert_eq!(deck.slides[1].title.as_deref(), Some("A"));
+        assert!(deck.slides[1].source.contains("Secret line"));
+        let html = crate::export::export_html(&deck, std::path::Path::new("."), None, None);
+        assert!(html.contains("aside class=\"notes\""));
+        assert!(html.contains("Secret line"));
+        assert!(!html.contains(":::notes"), "{html}");
+        let patched = patch_slide_markdown(&out, 1, None, Some("center"), None, Some("color=#112233"), None).unwrap();
+        let deck = crate::deck::Deck::from_markdown(&patched);
+        let html = crate::export::export_html(&deck, std::path::Path::new("."), None, None);
+        assert!(html.contains("align-center"), "{html}");
+        assert!(html.contains("#112233"), "{html}");
+        assert!(deck.slides[1].source.contains("Secret line"));
+    }
+
+    #[test]
+    fn duplicate_delete_and_attach_a_local_image() {
+        let dir = std::env::temp_dir().join("keynote-view-media");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = write_deck(&dir, "# Only\n");
+        let md = std::fs::read_to_string(&path).unwrap();
+        let dup = duplicate_slide_markdown(&md, 0).unwrap();
+        assert_eq!(crate::deck::Deck::from_markdown(&dup).slides.len(), 2);
+        let del = delete_slide_markdown(&dup, 1).unwrap();
+        assert_eq!(crate::deck::Deck::from_markdown(&del).slides.len(), 1);
+        assert!(delete_slide_markdown(&md, 0).is_err());
+        std::fs::write(dir.join("pic.png"), b"png").unwrap();
+        let with = attach_media(&path, &md, 0, &dir.join("pic.png")).unwrap();
+        assert!(with.contains("![fit](pic.png)"), "{with}");
+        assert!(dir.join("images").join("pic.png").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

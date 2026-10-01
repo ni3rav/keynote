@@ -60,7 +60,8 @@ header {
   border-bottom: 1px solid var(--line);
   color: var(--fg-bright);
 }
-#save:hover, #format button:hover, .modes button:hover { color: var(--fg-bright); }
+#save:hover, #format button:hover, .modes button:hover, #slide-tools button:hover, .media-row button:hover { color: var(--fg-bright); }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 #status { min-width: 72px; text-align: right; color: var(--muted); font-size: 13px; }
 #format {
   display: flex;
@@ -85,6 +86,23 @@ header {
   overflow: auto;
   min-height: 0;
 }
+#slide-tools { display: flex; gap: 6px; padding: 0 10px 8px; }
+#slide-tools button, .media-row button {
+  height: 26px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: transparent; color: var(--muted); cursor: pointer; font: inherit;
+}
+#inspector {
+  display: none; background: var(--bg-dark); border-left: 1px solid var(--line);
+  overflow: auto; padding: 12px 14px 20px; min-height: 0;
+}
+#inspector h2 { margin: 12px 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+#inspector label { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+#inspector select, #inspector input {
+  background: var(--bg); color: var(--fg-bright); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit;
+}
+#notes { width: 100%; min-height: 140px; box-sizing: border-box; }
+.media-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.hint { color: var(--muted); font-size: 12px; line-height: 1.4; }
 #rail h2 {
   margin: 0;
   padding: 12px 14px 6px;
@@ -186,6 +204,12 @@ body.mode-overview #main {
 body.mode-overview #overview { display: grid; }
 body.mode-overview #preview, body.mode-overview #source, body.mode-overview #slide-source,
 body.mode-overview #v-divider, body.mode-overview #h-divider { display: none; }
+body.mode-visual #workspace, body.mode-presenter #workspace { grid-template-columns: var(--side) 6px minmax(0, 1fr) 280px; }
+body.mode-visual #inspector, body.mode-presenter #inspector { display: block; }
+body.mode-presenter #format, body.mode-presenter #rail, body.mode-presenter #divider-side,
+body.mode-presenter #slide-source, body.mode-presenter #h-divider { display: none; }
+body.mode-presenter #workspace { grid-template-columns: minmax(0, 1fr) 300px; }
+body.mode-presenter #main { grid-template-areas: "preview"; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
 body.mode-present #format, body.mode-present #rail, body.mode-present #divider-side { display: none; }
 body.mode-present #workspace { grid-template-columns: minmax(0, 1fr); }
 body.mode-present #main {
@@ -204,7 +228,8 @@ body.mode-present #v-divider, body.mode-present #h-divider, body.mode-present #o
     <button type="button" data-mode="visual">Visual</button>
     <button type="button" data-mode="overview">Overview</button>
     <button type="button" data-mode="markdown">Markdown</button>
-    <button type="button" data-mode="present">Present</button>
+    <button type="button" data-mode="presenter" title="Slide plus speaker notes">Presenter</button>
+    <button type="button" data-mode="present" title="Audience view">Present</button>
   </nav>
   <button id="save" type="button">Save</button>
   <span id="status"></span>
@@ -219,7 +244,7 @@ body.mode-present #v-divider, body.mode-present #h-divider, body.mode-present #o
   <button type="button" data-before="`" data-after="`" title="Code">Code</button>
 </div>
 <div id="workspace">
-  <aside id="rail"><h2>Slides</h2><div id="slide-list"></div></aside>
+  <aside id="rail"><h2>Slides</h2><div id="slide-tools"><button type="button" id="dup" title="Duplicate slide (Ctrl+D)">Duplicate</button><button type="button" id="del" title="Delete slide">Delete</button></div><div id="slide-list"></div></aside>
   <div id="divider-side" title="Drag to resize the slide list"></div>
   <div id="main">
     <iframe id="preview" title="Slide"></iframe>
@@ -229,6 +254,21 @@ body.mode-present #v-divider, body.mode-present #h-divider, body.mode-present #o
     <div id="v-divider" title="Drag to resize the editor and preview"></div>
     <div id="overview"></div>
   </div>
+  <aside id="inspector">
+    <h2>Properties</h2>
+    <label>Align <select id="align" title="Horizontal alignment"><option value="">Left</option><option value="center">Center</option><option value="right">Right</option><option value="justify">Justify</option></select></label>
+    <label>Vertical <select id="valign" title="Vertical alignment"><option value="">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label>
+    <label>Background <input id="bg" type="text" spellcheck="false" placeholder="#112233, gradient=#111,#333, image=photo.jpg" title="Solid hex, gradient=#a,#b, or image=file.jpg"></label>
+    <div class="media-row">
+      <button type="button" id="fit" title="Show the whole image">Fit</button>
+      <button type="button" id="span" title="Fill the slide">Span</button>
+      <button type="button" id="add-image" title="Insert an image">Image</button>
+      <button type="button" id="add-video" title="Insert a video">Video</button>
+    </div>
+    <p class="hint">One image or video per slide. Fit and span are how it sits on the slide. Drop a file onto the window to attach it.</p>
+    <h2>Speaker notes</h2>
+    <textarea id="notes" spellcheck="true" placeholder="Only you see this. It stays off the slide."></textarea>
+  </aside>
 </div>
 <script id="boot" type="application/json">__BOOT_JSON__</script>
 <script>
@@ -260,10 +300,22 @@ function setStatus(text) { status.textContent = text || ''; }
 function paint() {
   if (current >= slides.length) current = Math.max(0, slides.length - 1);
   const card = slides[current];
-  if (mode === 'markdown') preview.srcdoc = fullHtml;
+  if (mode === 'markdown' || mode === 'present') preview.srcdoc = fullHtml;
   else if (card) preview.srcdoc = card.html;
+  fillInspector(card);
   renderRail();
   renderOverview();
+}
+function fillInspector(card) {
+  const notes = document.getElementById('notes');
+  const align = document.getElementById('align');
+  const valign = document.getElementById('valign');
+  const bg = document.getElementById('bg');
+  if (!card || document.activeElement === notes) return;
+  notes.value = card.notes || '';
+  align.value = card.align || '';
+  valign.value = card.valign || '';
+  if (document.activeElement !== bg) bg.value = card.background || '';
 }
 function renderRail() {
   listEl.replaceChildren();
@@ -350,20 +402,21 @@ function bindReorder(el, index) {
 function select(index) {
   if (index < 0 || index >= slides.length) return;
   current = index;
-  slideEl.value = slides[current].source || '';
+  slideEl.value = slides[current].body || '';
   paint();
+  invoke('focus_slide', { index: current }).catch(() => {});
 }
 function setMode(next) {
   mode = next;
-  document.body.classList.remove('mode-visual', 'mode-overview', 'mode-markdown', 'mode-present');
+  document.body.classList.remove('mode-visual', 'mode-overview', 'mode-markdown', 'mode-present', 'mode-presenter');
   document.body.classList.add('mode-' + mode);
   document.querySelectorAll('.modes button').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.mode === mode);
   });
   if (mode === 'markdown') sourceEl.value = markdown;
-  if (mode === 'visual' && slides[current]) slideEl.value = slides[current].source || '';
+  if (mode === 'visual' && slides[current]) slideEl.value = slides[current].body || '';
   paint();
-  if (mode === 'present') preview.contentWindow && preview.contentWindow.focus();
+  if (mode === 'present' || mode === 'presenter') preview.contentWindow && preview.contentWindow.focus();
   if (mode === 'overview') requestAnimationFrame(fitThumbs);
 }
 function apply(result, keep) {
@@ -371,7 +424,11 @@ function apply(result, keep) {
   fullHtml = result.html;
   slides = result.slides || [];
   if (!keep || keep.source !== true) sourceEl.value = markdown;
-  if ((!keep || keep.slide !== true) && slides[current]) slideEl.value = slides[current].source || '';
+  if ((!keep || keep.slide !== true) && slides[current]) slideEl.value = slides[current].body || '';
+  if (keep && keep.notes) {
+    paint();
+    return;
+  }
   paint();
 }
 let timer;
@@ -423,11 +480,81 @@ async function save() {
   } catch (e) { setStatus(explain(e)); }
 }
 document.getElementById('save').onclick = save;
+document.getElementById('dup').onclick = () => changeDeck(() => invoke('duplicate_slide', { markdown, index: current }));
+document.getElementById('del').onclick = () => changeDeck(() => invoke('delete_slide', { markdown, index: current }));
+document.getElementById('add-image').onclick = () => changeDeck(() => invoke('insert_media', { markdown, index: current, kind: 'image' }));
+document.getElementById('add-video').onclick = () => changeDeck(() => invoke('insert_media', { markdown, index: current, kind: 'video' }));
+document.getElementById('fit').onclick = () => patch({ layout: 'fit' });
+document.getElementById('span').onclick = () => patch({ layout: 'span' });
+document.getElementById('align').onchange = (e) => patch({ align: e.target.value });
+document.getElementById('valign').onchange = (e) => patch({ valign: e.target.value });
+document.getElementById('bg').onchange = (e) => patch({ background: e.target.value || 'none' });
+document.getElementById('notes').addEventListener('input', () => schedule(() => patch({ notes: document.getElementById('notes').value }, true)));
+async function changeDeck(op) {
+  remember();
+  try {
+    apply(await op());
+    setStatus('');
+    scheduleSave();
+  } catch (e) {
+    if (explain(e) !== 'cancelled') setStatus(explain(e));
+  }
+}
+function patch(fields, fromNotes) {
+  const run = async () => {
+    if (!fromNotes) remember();
+    try {
+      apply(await invoke('patch_slide', Object.assign({ markdown, index: current }, fields)), { slide: true, notes: !!fromNotes });
+      setStatus('');
+      scheduleSave();
+    } catch (e) { setStatus(explain(e)); }
+  };
+  if (fromNotes) run();
+  else run();
+}
+let saveTimer;
+function scheduleSave() {
+  setStatus('Unsaved');
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 1200);
+}
+const undoStack = [];
+const redoStack = [];
+function remember() {
+  if (undoStack[undoStack.length - 1] !== markdown) undoStack.push(markdown);
+  if (undoStack.length > 80) undoStack.shift();
+  redoStack.length = 0;
+}
+async function restore(next) {
+  try {
+    apply(await invoke('render_deck', { markdown: next }));
+    setStatus('Unsaved');
+    scheduleSave();
+  } catch (e) { setStatus(explain(e)); }
+}
+window.onExternal = (rendered) => { remember(); apply(rendered); scheduleSave(); };
 document.querySelectorAll('.modes button').forEach((btn) => {
   btn.onclick = () => setMode(btn.dataset.mode);
 });
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+    e.preventDefault();
+    const prev = undoStack.pop();
+    if (prev === undefined) return;
+    redoStack.push(markdown);
+    restore(prev);
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) {
+    e.preventDefault();
+    const next = redoStack.pop();
+    if (next === undefined) return;
+    undoStack.push(markdown);
+    restore(next);
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'd') { e.preventDefault(); document.getElementById('dup').click(); return; }
   if (e.target.matches('textarea')) return;
   if (mode === 'visual' || mode === 'overview') {
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') select(current + 1);
@@ -468,7 +595,7 @@ dragHandle(document.getElementById('h-divider'), (ev) => {
 });
 window.addEventListener('resize', fitThumbs);
 sourceEl.value = markdown;
-if (slides[0]) slideEl.value = slides[0].source || '';
+if (slides[0]) slideEl.value = slides[0].body || '';
 setMode(mode);
 </script>
 </body>

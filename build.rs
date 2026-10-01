@@ -8,6 +8,13 @@ fn main() {
                 "render_deck",
                 "move_slide",
                 "replace_slide",
+                "patch_slide",
+                "duplicate_slide",
+                "delete_slide",
+                "insert_media",
+                "focus_slide",
+                "pick_deck",
+                "create_deck",
             ])),
     )
     .expect("tauri build");

@@ -64,7 +64,7 @@ fn relative_media_src(base_dir: &Path, src: &str) -> String {
 }
 
 fn strip_media_lines(source: &str) -> String {
-    source
+    crate::slide_meta::visible_body(source)
         .lines()
         .filter(|l| {
             let t = l.trim();
@@ -118,14 +118,26 @@ fn media_html(deck_slide: &crate::deck::Slide, base_dir: &Path) -> String {
 }
 
 fn slide_inner_html(slide: &crate::deck::Slide, base_dir: &Path) -> String {
+    let meta = crate::slide_meta::parse_meta(&slide.source);
     let text = strip_media_lines(&slide.source);
     let html = markdown_to_html(&text);
     let media = media_html(slide, base_dir);
-    if media.is_empty() {
+    let body = if media.is_empty() {
         html
     } else {
         format!("{media}\n<div class=\"overlay\">\n{html}\n</div>")
-    }
+    };
+    let (class, style) = crate::slide_meta::frame_attrs(&meta);
+    let notes = html_escape(&meta.notes);
+    format!(
+        "<div class=\"slide-frame{class}\" style=\"{style}\">\n{body}\n<aside class=\"notes\">{notes}</aside>\n</div>"
+    )
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn base_css() -> &'static str {
@@ -147,6 +159,14 @@ body { margin:0; background:var(--bg); color:var(--fg); font-family:var(--font);
 .media-wrap.bg-color { background:var(--media-bg,#222); padding:8px; }
 .slide:has(.media-wrap) .overlay { color:#fff; text-shadow:0 1px 12px rgba(0,0,0,.7); }
 .slide:has(.media-wrap) .overlay::before { content:""; position:absolute; inset:0; background:rgba(0,0,0,.28); backdrop-filter:blur(2px); z-index:-1; }
+.slide-frame { min-height:70vh; }
+.align-center, .align-center .overlay { text-align:center; }
+.align-right, .align-right .overlay { text-align:right; }
+.align-justify, .align-justify .overlay { text-align:justify; }
+.valign-middle { display:flex; flex-direction:column; justify-content:center; }
+.valign-bottom { display:flex; flex-direction:column; justify-content:flex-end; }
+.notes { display:none; }
+body.presenter .notes { display:block; position:fixed; left:0; right:0; bottom:0; max-height:30vh; overflow:auto; margin:0; padding:16px 28px; background:rgba(10,10,16,.88); color:#fff; font-size:1.05rem; white-space:pre-wrap; }
 #error-banner { background:#7f1d1d; color:#fff; padding:.6em 1em; border-radius:8px; margin-bottom:1em; font-size:1rem; }
 #hud { position:fixed; bottom:12px; right:16px; opacity:.6; font-size:.9rem; }
 #hud button { margin-left:8px; }
@@ -196,7 +216,7 @@ body {{ --font:{font}; }}
 let i=0; const slides=[...document.querySelectorAll('.slide')];
 function show(n){{ i=(n+slides.length)%slides.length; slides.forEach((s,k)=>s.style.display=k===i?'block':'none'); document.getElementById('pos').textContent=(i+1)+' / '+slides.length; const v=slides[i].querySelector('video[autoplay]'); if(v){{v.currentTime=0; v.play().catch(()=>{{}});}} }}
 function next(){{show(i+1)}} function prev(){{show(i-1)}}
-document.addEventListener('keydown',e=>{{ if(e.key==='ArrowRight'||e.key===' '||e.key==='Enter')next(); if(e.key==='ArrowLeft')prev(); }});
+document.addEventListener('keydown',e=>{{ if(e.key==='ArrowRight'||e.key===' '||e.key==='Enter')next(); if(e.key==='ArrowLeft')prev(); if(e.key==='n'||e.key==='N')document.body.classList.toggle('presenter'); }});
 show(0);
 </script>
 </body>

@@ -2,15 +2,22 @@ mod agent;
 mod backup;
 mod deck;
 mod export;
+mod launch;
 mod pptx;
 mod present;
+mod slide_meta;
 mod view;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
-#[command(name = "keynote", version, about = "Markdown-powered slides in your terminal")]
+#[command(
+    name = "keynote",
+    version,
+    about = "Markdown slides",
+    long_about = "Markdown slides.\n\n  keynote                 open the editor\n  keynote talk.md         open a deck in the editor\n  keynote --help\n  keynote --version\n  keynote install         desktop launcher and ~/.local/bin/keynote"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -125,6 +132,8 @@ enum Cmd {
     Open { file: PathBuf },
     /// Present a deck in the terminal (←/→, q to quit)
     Present { file: PathBuf },
+    /// Copy this binary onto ~/.local/bin and add a desktop launcher
+    Install,
     /// Present a deck in a native window (same HTML renderer as export)
     View {
         file: PathBuf,
@@ -135,6 +144,18 @@ enum Cmd {
 }
 
 fn main() {
+    let raw: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(req) = launch::gui_request(&raw) {
+        let result = match req {
+            launch::GuiRequest::Start => view::open_launcher(),
+            launch::GuiRequest::File(path) => view::open(&path, true),
+        };
+        if let Err(e) = result {
+            eprintln!("keynote: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Err(e) = run() {
         eprintln!("keynote: {e}");
         std::process::exit(1);
@@ -430,6 +451,43 @@ fn run() -> Result<(), String> {
             let deck = deck::Deck::from_file(&file)?;
             present::present(&deck).map_err(|e| e.to_string())
         }
+        Cmd::Install => install_desktop(),
         Cmd::View { file, editor } => view::open(&file, editor),
     }
+}
+
+fn install_desktop() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("current exe: {e}"))?;
+    let home = std::env::var("HOME").map_err(|_| "no HOME set".to_string())?;
+    let home = PathBuf::from(home);
+    let bin_dir = home.join(".local/bin");
+    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("mkdir {}: {e}", bin_dir.display()))?;
+    let dest = bin_dir.join("keynote");
+    if exe.canonicalize().ok() != dest.canonicalize().ok() {
+        std::fs::copy(&exe, &dest).map_err(|e| format!("copy binary: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&dest)
+                .map_err(|e| e.to_string())?
+                .permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&dest, perms).map_err(|e| e.to_string())?;
+        }
+    }
+    let icon_dir = home.join(".local/share/icons");
+    let _ = std::fs::create_dir_all(&icon_dir);
+    let _ = std::fs::write(icon_dir.join("keynote.png"), include_bytes!("../icons/icon.png"));
+    let apps = home.join(".local/share/applications");
+    std::fs::create_dir_all(&apps).map_err(|e| format!("mkdir {}: {e}", apps.display()))?;
+    let desktop = apps.join("keynote.desktop");
+    let body = format!(
+        "[Desktop Entry]\nName=keynote\nComment=Markdown slides\nExec={} %f\nIcon=keynote\nTerminal=false\nType=Application\nCategories=Office;\nMimeType=text/markdown;\n",
+        dest.display()
+    );
+    std::fs::write(&desktop, body).map_err(|e| format!("write {}: {e}", desktop.display()))?;
+    println!("installed {}", dest.display());
+    println!("launcher {}", desktop.display());
+    println!("ensure {} is on PATH", bin_dir.display());
+    Ok(())
 }

@@ -26,6 +26,7 @@ keynote export talk.md talk.html
 keynote export talk.md talk.pdf
 keynote export talk.md talk.pptx
 keynote present talk.md
+keynote view talk.md
 ```
 
 Agents: start with `keynote format` (whole slide format, one read) and `keynote skill` / `keynote skill install`.
@@ -38,6 +39,18 @@ Optional frontmatter (`title/author/theme/font`), slides split on exact `---` li
 
 Successful `new`/`export` writes timestamped `.bak` copies to `.keynote-backups/` beside the deck plus a recovery snapshot under `~/.local/state/keynote/recovery/` (or `$XDG_STATE_HOME`). `history` lists, `restore` rolls back. Unfinished code fences block export; `render` still emits PNGs with an error banner so agents can see failures.
 
+## Native view
+
+`keynote view talk.md` opens the deck in a native window. It loads the same HTML renderer as `export` (arrow keys, Space, and the on-screen controls). Build that binary with WebKit installed:
+
+```sh
+cargo build --release --features native-view
+```
+
+That feature needs Rust 1.90 or newer, because Tauri does. The rest of the CLI builds without it.
+
+Without the feature, `view` still parses the deck and tells you to rebuild.
+
 ## Next milestone
 
-Tauri Visual/Overview/Markdown editor reusing the HTML single renderer (this CLI is the tracer). PPTX embeds per-slide PNGs + MP4s (no editable text, matching Hype's rendered-appearance contract).
+Tauri Visual/Overview/Markdown editor on top of this native view. PPTX embeds per-slide PNGs + MP4s (no editable text, matching Hype's rendered-appearance contract).

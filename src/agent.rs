@@ -61,7 +61,8 @@ CLI (exit 0 ok / 1 fail, errors on stderr, --json everywhere):
   keynote skill                           # print agent skill
   keynote skill install                   # install to ~/.agents/skills/keynote/
   keynote open talk.md                    # export HTML, open browser, present in terminal
-  keynote present talk.md
+  keynote present talk.md                 # terminal
+  keynote view talk.md                    # native window (cargo build --features native-view)
 "#;
 
 pub const SKILL_TEXT: &str = r#"---

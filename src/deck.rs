@@ -532,8 +532,9 @@ fn underline_line(line: &str) -> String {
                 }
             }
         }
-        res.push(b[i] as char);
-        i += 1;
+        let ch = line[i..].chars().next().unwrap();
+        res.push(ch);
+        i += ch.len_utf8();
     }
     res
 }
@@ -626,6 +627,13 @@ mod tests {
         let md = "# T\n\n![sideways](pic.jpg)\n";
         let deck = Deck::from_markdown(md);
         assert_eq!(deck.slides[0].media[0].invalid_tokens, vec!["sideways"]);
+    }
+
+    #[test]
+    fn markdown_keeps_utf8_arrow() {
+        let html = markdown_to_html("Press → to continue");
+        assert!(html.contains("→"), "{html}");
+        assert!(!html.contains('â'), "{html}");
     }
 
     #[test]

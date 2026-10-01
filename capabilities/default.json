@@ -1,0 +1,6 @@
+{
+  "identifier": "view",
+  "description": "Native slide view window",
+  "windows": ["view"],
+  "permissions": []
+}

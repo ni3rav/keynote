@@ -4,6 +4,7 @@ mod deck;
 mod export;
 mod pptx;
 mod present;
+mod view;
 
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
@@ -124,6 +125,8 @@ enum Cmd {
     Open { file: PathBuf },
     /// Present a deck in the terminal (←/→, q to quit)
     Present { file: PathBuf },
+    /// Present a deck in a native window (same HTML renderer as export)
+    View { file: PathBuf },
 }
 
 fn main() {
@@ -422,5 +425,6 @@ fn run() -> Result<(), String> {
             let deck = deck::Deck::from_file(&file)?;
             present::present(&deck).map_err(|e| e.to_string())
         }
+        Cmd::View { file } => view::open(&file),
     }
 }

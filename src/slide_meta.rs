@@ -7,6 +7,8 @@ pub struct SlideMeta {
     pub align: String,
     pub valign: String,
     pub background: String,
+    /// When set, list items (or paragraphs, if there is no list) appear one step at a time while presenting.
+    pub reveal: bool,
 }
 
 impl Default for SlideMeta {
@@ -16,6 +18,7 @@ impl Default for SlideMeta {
             align: String::new(),
             valign: String::new(),
             background: String::new(),
+            reveal: false,
         }
     }
 }
@@ -44,6 +47,8 @@ pub fn parse_meta(source: &str) -> SlideMeta {
             meta.valign = normalize_valign(rest);
         } else if let Some(rest) = t.strip_prefix("@background ") {
             meta.background = rest.trim().to_string();
+        } else if t == "@reveal" {
+            meta.reveal = true;
         }
     }
     meta.notes = notes.join("\n").trim().to_string();
@@ -66,7 +71,11 @@ pub fn visible_body(source: &str) -> String {
             in_notes = true;
             continue;
         }
-        if t.starts_with("@align ") || t.starts_with("@valign ") || t.starts_with("@background ") {
+        if t.starts_with("@align ")
+            || t.starts_with("@valign ")
+            || t.starts_with("@background ")
+            || t == "@reveal"
+        {
             continue;
         }
         out.push(line);
@@ -85,6 +94,9 @@ pub fn with_meta(source: &str, meta: &SlideMeta) -> String {
     }
     if !meta.background.trim().is_empty() && meta.background.trim() != "none" {
         lines.push(format!("@background {}", meta.background.trim()));
+    }
+    if meta.reveal {
+        lines.push("@reveal".into());
     }
     if !body.is_empty() {
         if !lines.is_empty() {
@@ -270,6 +282,7 @@ mod tests {
             align: "center".into(),
             valign: "middle".into(),
             background: "color=#112233".into(),
+            reveal: false,
         };
         let src = with_meta("# Title", &meta);
         let parsed = parse_meta(&src);
@@ -280,6 +293,7 @@ mod tests {
         assert!(!style.contains("expression"));
         let (_c, bad) = frame_attrs(&SlideMeta {
             background: "color=red;}</style>".into(),
+            reveal: false,
             ..SlideMeta::default()
         });
         assert!(bad.is_empty(), "{bad}");

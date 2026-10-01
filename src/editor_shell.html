@@ -97,6 +97,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 }
 #inspector h2 { margin: 12px 0 8px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 #inspector label { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+#inspector label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); }
 #inspector select, #inspector input {
   background: var(--bg); color: var(--fg-bright); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit;
 }
@@ -291,6 +292,7 @@ body.mode-help #help { display: block; }
   </div>
   <aside id="inspector">
     <h2>Properties</h2>
+    <label class="check"><input id="reveal" type="checkbox"> Reveal text step by step</label>
     <label>Align <select id="align" title="Horizontal alignment"><option value="">Left</option><option value="center">Center</option><option value="right">Right</option><option value="justify">Justify</option></select></label>
     <label>Vertical <select id="valign" title="Vertical alignment"><option value="">Top</option><option value="middle">Middle</option><option value="bottom">Bottom</option></select></label>
     <label>Background <input id="bg" type="text" spellcheck="false" placeholder="#112233, gradient=#111,#333, image=photo.jpg" title="Solid hex, gradient=#a,#b, or image=file.jpg"></label>
@@ -333,6 +335,18 @@ const boot = JSON.parse(document.getElementById('boot').textContent);
 const sourceEl = document.getElementById('source');
 const slideEl = document.getElementById('slide-source');
 const preview = document.getElementById('preview');
+preview.addEventListener('load', () => {
+  const on = mode === 'present' || mode === 'presenter';
+  try { preview.contentWindow.postMessage({ type: 'keynote-mode', presenting: on }, '*'); } catch (err) {}
+});
+window.addEventListener('message', (e) => {
+  if (!e.data || e.data.type !== 'keynote-slide') return;
+  if (mode !== 'present' && mode !== 'presenter') return;
+  if (typeof e.data.index !== 'number' || e.data.index === current) return;
+  current = e.data.index;
+  fillInspector(slides[current]);
+  renderRail();
+});
 const status = document.getElementById('status');
 const listEl = document.getElementById('slide-list');
 const overviewEl = document.getElementById('overview');
@@ -357,7 +371,7 @@ function setStatus(text) { status.textContent = text || ''; }
 function paint() {
   if (current >= slides.length) current = Math.max(0, slides.length - 1);
   const card = slides[current];
-  if (mode === 'markdown' || mode === 'present') preview.srcdoc = fullHtml;
+  if (mode === 'markdown' || mode === 'present' || mode === 'presenter') preview.srcdoc = fullHtml;
   else if (card) preview.srcdoc = card.html;
   fillInspector(card);
   renderRail();
@@ -373,6 +387,8 @@ function fillInspector(card) {
   align.value = card.align || '';
   valign.value = card.valign || '';
   if (document.activeElement !== bg) bg.value = card.background || '';
+  const reveal = document.getElementById('reveal');
+  if (reveal && document.activeElement !== reveal) reveal.checked = !!card.reveal;
 }
 function renderRail() {
   listEl.replaceChildren();
@@ -543,6 +559,7 @@ document.getElementById('add-image').onclick = () => changeDeck(() => invoke('in
 document.getElementById('add-video').onclick = () => changeDeck(() => invoke('insert_media', { markdown, index: current, kind: 'video' }));
 document.getElementById('fit').onclick = () => patch({ layout: 'fit' });
 document.getElementById('span').onclick = () => patch({ layout: 'span' });
+document.getElementById('reveal').onchange = (e) => patch({ reveal: e.target.checked });
 document.getElementById('align').onchange = (e) => patch({ align: e.target.value });
 document.getElementById('valign').onchange = (e) => patch({ valign: e.target.value });
 document.getElementById('bg').onchange = (e) => patch({ background: e.target.value || 'none' });
@@ -661,7 +678,7 @@ const helpTopics = [
   { id: 'reorder', cat: 'Editing', title: 'Reorder and resize',
     html: '<ol><li>Drag a row in the slide list. Drop it on another row.</li><li>Or open Overview and drag a card.</li><li>Drag the bar beside the list to make it wider or narrower.</li><li>In Visual, drag the bar above the slide editor to give the notes more room.</li><li>In Markdown, drag the bar between the file and the preview.</li></ol><figure><img src="help/reorder.png" alt="Slide list after Thank you was dragged to the first position."><figcaption>Thank you is first. The preview and the slide editor followed.</figcaption></figure><figure><video controls preload="metadata"><source src="help/tour.mp4" type="video/mp4"><track kind="captions" src="help/tour.vtt" srclang="en" label="English" default></video><figcaption>Reorder a slide, widen the list, open Overview, then resize the Markdown split.</figcaption></figure>' },
   { id: 'format', cat: 'Editing', title: 'Text formatting',
-    html: '<p>Select text in the slide editor or the Markdown editor, then use the bar.</p><ul><li>Bold wraps the selection in <code>**</code>.</li><li>Italic uses a single <code>*</code>, which is the Hype style.</li><li>Underline uses <code>_underscores_</code>.</li><li>Heading, List, Quote, and Code insert Markdown at the cursor.</li></ul><p>Alignment is not a character style. Set Align and Vertical in Properties. That writes <code>@align</code> and <code>@valign</code> into the slide and keeps them out of the slide editor.</p>' },
+    html: '<p>Select text in the slide editor or the Markdown editor, then use the bar.</p><ul><li>Bold wraps the selection in <code>**</code>.</li><li>Italic uses a single <code>*</code>, which is the Hype style.</li><li>Underline uses <code>_underscores_</code>.</li><li>Heading, List, Quote, and Code insert Markdown at the cursor.</li></ul><p>Alignment is not a character style. Set Align and Vertical in Properties. That writes <code>@align</code> and <code>@valign</code> into the slide and keeps them out of the slide editor.</p><p>Turn on <strong>Reveal text step by step</strong> to write <code>@reveal</code>. In Present or Presenter, Space and the right arrow show the next bullet. The title stays up. Without a list, each paragraph steps instead. The editor itself still shows the whole slide.</p>' },
   { id: 'notes', cat: 'Speaker notes', title: 'Notes for one slide',
     html: '<ol><li>Select the slide.</li><li>Type in Speaker notes. The words are stored in a <code>:::notes</code> block and are not drawn on the slide.</li><li>Open Presenter to read them beside the slide.</li><li>Reorder, duplicate, or delete the slide and the notes go with it.</li><li>In an exported HTML deck, press <kbd>n</kbd> to show or hide notes.</li></ol>' },
   { id: 'media', cat: 'Media', title: 'Images, video, and backgrounds',

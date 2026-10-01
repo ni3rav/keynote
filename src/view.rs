@@ -103,6 +103,7 @@ pub struct SlideCard {
     pub align: String,
     pub valign: String,
     pub background: String,
+    pub reveal: bool,
     pub layout: String,
 }
 
@@ -215,6 +216,7 @@ pub fn patch_slide_markdown(
     valign: Option<&str>,
     background: Option<&str>,
     layout: Option<&str>,
+    reveal: Option<bool>,
 ) -> Result<String, String> {
     let (prefix, mut slides) = split_editable(markdown)?;
     if index >= slides.len() {
@@ -239,6 +241,9 @@ pub fn patch_slide_markdown(
         } else {
             background.to_string()
         };
+    }
+    if let Some(reveal) = reveal {
+        meta.reveal = reveal;
     }
     slides[index] = crate::slide_meta::with_meta(&slides[index], &meta);
     Ok(join_editable(&prefix, &slides))
@@ -370,6 +375,7 @@ pub fn render_model(markdown: &str, root: &Path) -> Result<DeckRender, String> {
                 align: meta.align,
                 valign: meta.valign,
                 background: meta.background,
+                reveal: meta.reveal,
                 layout,
             }
         })
@@ -657,6 +663,7 @@ fn patch_slide(
     valign: Option<String>,
     background: Option<String>,
     layout: Option<String>,
+    reveal: Option<bool>,
     state: tauri::State<'_, EditorState>,
 ) -> Result<DeckRender, String> {
     let markdown = patch_slide_markdown(
@@ -667,6 +674,7 @@ fn patch_slide(
         valign.as_deref(),
         background.as_deref(),
         layout.as_deref(),
+        reveal,
     )?;
     publish(&state, markdown)
 }
@@ -1128,12 +1136,24 @@ mod tests {
         assert!(html.contains("aside class=\"notes\""));
         assert!(html.contains("Secret line"));
         assert!(!html.contains(":::notes"), "{html}");
-        let patched = patch_slide_markdown(&out, 1, None, Some("center"), None, Some("color=#112233"), None).unwrap();
+        let patched = patch_slide_markdown(&out, 1, None, Some("center"), None, Some("color=#112233"), None, None).unwrap();
         let deck = crate::deck::Deck::from_markdown(&patched);
         let html = crate::export::export_html(&deck, std::path::Path::new("."), None, None);
         assert!(html.contains("align-center"), "{html}");
         assert!(html.contains("#112233"), "{html}");
         assert!(deck.slides[1].source.contains("Secret line"));
+    }
+
+    #[test]
+    fn reveal_marks_each_bullet_as_a_step() {
+        let deck = crate::deck::Deck::from_markdown("@reveal\n\n# Title\n\n- One\n- Two\n");
+        let html = crate::export::export_html(&deck, std::path::Path::new("."), None, None);
+        assert!(html.contains("data-step=\"0\""), "{html}");
+        assert!(html.contains("data-step=\"1\""), "{html}");
+        assert!(!html.contains("@reveal"), "{html}");
+        let deck = crate::deck::Deck::from_markdown("# Title\n\n- One\n");
+        let plain = crate::export::export_html(&deck, std::path::Path::new("."), None, None);
+        assert!(!plain.contains("class=\"step\""), "{plain}");
     }
 
     #[test]

@@ -58,7 +58,7 @@ Visual mode edits one slide at a time. Speaker notes (`:::notes`), alignment (`@
 
 Images and videos are one per slide (`![fit](file)` or `![span](file)`), copied into `images/` or `videos/`. Fit and span are the positioning controls. A file dropped on the window is attached to the current slide. Freeform x/y boxes, rotation, and crop handles are not part of this Markdown deck.
 
-Undo is Ctrl+Z, redo is Ctrl+Y, duplicate is Ctrl+D. Edits autosave. Help (F1) is the user guide: searchable topics, screenshots, a captioned tour video, and a guided tour of the buttons.
+Undo is Ctrl+Z, redo is Ctrl+Y, duplicate is Ctrl+D. Edits autosave. Help (F1) is the user guide: searchable topics, screenshots, a captioned tour video, and a guided tour of the buttons. `@reveal` on a slide shows bullets one at a time in Present and Presenter (Space or the right arrow). The editor still shows the whole slide.
 
 ## Native view
 

@@ -70,6 +70,7 @@ CLI (exit 0 ok / 1 fail, errors on stderr, --json everywhere):
 Speaker notes, alignment, and backgrounds live in the slide and are not drawn as copy:
 
   @align center
+  @reveal            # bullets (or paragraphs) appear one step at a time in Present
   @valign middle
   @background color=#112233
   :::notes

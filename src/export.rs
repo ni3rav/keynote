@@ -64,7 +64,7 @@ fn relative_media_src(base_dir: &Path, src: &str) -> String {
 }
 
 fn strip_media_lines(source: &str) -> String {
-    source
+    crate::slide_meta::visible_body(source)
         .lines()
         .filter(|l| {
             let t = l.trim();
@@ -118,14 +118,66 @@ fn media_html(deck_slide: &crate::deck::Slide, base_dir: &Path) -> String {
 }
 
 fn slide_inner_html(slide: &crate::deck::Slide, base_dir: &Path) -> String {
+    let meta = crate::slide_meta::parse_meta(&slide.source);
     let text = strip_media_lines(&slide.source);
-    let html = markdown_to_html(&text);
+    let mut html = markdown_to_html(&text);
+    if meta.reveal {
+        html = mark_reveal_steps(&html);
+    }
     let media = media_html(slide, base_dir);
-    if media.is_empty() {
+    let body = if media.is_empty() {
         html
     } else {
         format!("{media}\n<div class=\"overlay\">\n{html}\n</div>")
+    };
+    let (class, style) = crate::slide_meta::frame_attrs(&meta);
+    let notes = html_escape(&meta.notes);
+    format!(
+        "<div class=\"slide-frame{class}\" style=\"{style}\">\n{body}\n<aside class=\"notes\">{notes}</aside>\n</div>"
+    )
+}
+
+/// List items become steps. Without a list, paragraphs and later headings do.
+fn mark_reveal_steps(html: &str) -> String {
+    let tags: &[&str] = if html.contains("<li") {
+        &["li"]
+    } else {
+        &["p", "blockquote", "pre", "h2", "h3"]
+    };
+    let mut out = String::new();
+    let mut rest = html;
+    let mut step = 0usize;
+    while let Some(start) = rest.find('<') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let matched = tags.iter().find(|tag| {
+            let head = format!("<{tag}");
+            rest.starts_with(&head)
+                && rest
+                    .as_bytes()
+                    .get(head.len())
+                    .map(|b| *b == b'>' || b.is_ascii_whitespace())
+                    .unwrap_or(false)
+        });
+        if let Some(tag) = matched {
+            out.push('<');
+            out.push_str(tag);
+            out.push_str(&format!(" class=\"step\" data-step=\"{step}\""));
+            step += 1;
+            rest = &rest[1 + tag.len()..];
+        } else {
+            out.push('<');
+            rest = &rest[1..];
+        }
     }
+    out.push_str(rest);
+    out
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 fn base_css() -> &'static str {
@@ -147,6 +199,16 @@ body { margin:0; background:var(--bg); color:var(--fg); font-family:var(--font);
 .media-wrap.bg-color { background:var(--media-bg,#222); padding:8px; }
 .slide:has(.media-wrap) .overlay { color:#fff; text-shadow:0 1px 12px rgba(0,0,0,.7); }
 .slide:has(.media-wrap) .overlay::before { content:""; position:absolute; inset:0; background:rgba(0,0,0,.28); backdrop-filter:blur(2px); z-index:-1; }
+.slide-frame { min-height:70vh; }
+.align-center, .align-center .overlay { text-align:center; }
+.align-right, .align-right .overlay { text-align:right; }
+.align-justify, .align-justify .overlay { text-align:justify; }
+.valign-middle { display:flex; flex-direction:column; justify-content:center; }
+.valign-bottom { display:flex; flex-direction:column; justify-content:flex-end; }
+body.presenting .step { opacity: 0; }
+body.presenting .step.on { opacity: 1; transition: opacity .16s ease; }
+.notes { display:none; }
+body.presenter .notes { display:block; position:fixed; left:0; right:0; bottom:0; max-height:30vh; overflow:auto; margin:0; padding:16px 28px; background:rgba(10,10,16,.88); color:#fff; font-size:1.05rem; white-space:pre-wrap; }
 #error-banner { background:#7f1d1d; color:#fff; padding:.6em 1em; border-radius:8px; margin-bottom:1em; font-size:1rem; }
 #hud { position:fixed; bottom:12px; right:16px; opacity:.6; font-size:.9rem; }
 #hud button { margin-left:8px; }
@@ -193,10 +255,15 @@ body {{ --font:{font}; }}
 {sections}
 <div id="hud"><span id="pos"></span><button onclick="prev()">←</button><button onclick="next()">→</button></div>
 <script>
-let i=0; const slides=[...document.querySelectorAll('.slide')];
-function show(n){{ i=(n+slides.length)%slides.length; slides.forEach((s,k)=>s.style.display=k===i?'block':'none'); document.getElementById('pos').textContent=(i+1)+' / '+slides.length; const v=slides[i].querySelector('video[autoplay]'); if(v){{v.currentTime=0; v.play().catch(()=>{{}});}} }}
-function next(){{show(i+1)}} function prev(){{show(i-1)}}
-document.addEventListener('keydown',e=>{{ if(e.key==='ArrowRight'||e.key===' '||e.key==='Enter')next(); if(e.key==='ArrowLeft')prev(); }});
+let i=0, step=-1, presenting=false;
+const slides=[...document.querySelectorAll('.slide')];
+function stepsOf(s){{ return [...s.querySelectorAll('.step')]; }}
+function applySteps(){{ const all=stepsOf(slides[i]); all.forEach((el,n)=>el.classList.toggle('on', !presenting || n<=step)); }}
+function show(n){{ i=(n+slides.length)%slides.length; step=-1; slides.forEach((s,k)=>s.style.display=k===i?'block':'none'); document.getElementById('pos').textContent=(i+1)+' / '+slides.length; applySteps(); const v=slides[i].querySelector('video[autoplay]'); if(v){{v.currentTime=0; v.play().catch(()=>{{}});}} try{{ parent.postMessage({{type:'keynote-slide', index:i}}, '*'); }}catch(_ ){{}} }}
+function next(){{ const all=stepsOf(slides[i]); if(presenting && step+1<all.length){{ step++; applySteps(); return; }} if(i+1<slides.length) show(i+1); }}
+function prev(){{ if(presenting && step>=0){{ step--; applySteps(); return; }} if(i>0) show(i-1); }}
+document.addEventListener('keydown',e=>{{ if(e.key==='ArrowRight'||e.key===' '||e.key==='Enter')next(); if(e.key==='ArrowLeft')prev(); if(e.key==='n'||e.key==='N')document.body.classList.toggle('presenter'); }});
+window.addEventListener('message',e=>{{ if(!e.data||e.data.type!=='keynote-mode')return; presenting=!!e.data.presenting; document.body.classList.toggle('presenting', presenting); step=-1; applySteps(); }});
 show(0);
 </script>
 </body>

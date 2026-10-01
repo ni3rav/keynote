@@ -5,6 +5,9 @@ fn main() {
             .app_manifest(tauri_build::AppManifest::new().commands(&[
                 "preview_html",
                 "save_deck",
+                "render_deck",
+                "move_slide",
+                "replace_slide",
             ])),
     )
     .expect("tauri build");

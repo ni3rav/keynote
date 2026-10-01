@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__</title>
+<style>
+:root {
+  --bg: #1a1b26;
+  --bg-dark: #13141c;
+  --bg-light: #24283b;
+  --fg: #a9b1d6;
+  --fg-bright: #c0caf5;
+  --muted: #565f89;
+  --accent: #7aa2f7;
+  --line: #292e42;
+  --selection: #292e42;
+  --side: 232px;
+  --split: 46%;
+  --edit-h: 168px;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Inter", system-ui, sans-serif;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px;
+  background: var(--bg-dark);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.brand { font-weight: 600; color: var(--fg-bright); letter-spacing: .01em; margin-right: 8px; }
+.modes { display: flex; height: 100%; }
+.modes button, #save, #format button {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0 12px;
+  height: 100%;
+  cursor: pointer;
+  font: inherit;
+}
+.modes button.active { color: var(--fg-bright); border-bottom-color: var(--accent); }
+#save {
+  margin-left: auto;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-bright);
+}
+#save:hover, #format button:hover, .modes button:hover { color: var(--fg-bright); }
+#status { min-width: 72px; text-align: right; color: var(--muted); font-size: 13px; }
+#format {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  height: 36px;
+  padding: 0 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+#format button { height: 28px; padding: 0 10px; border-radius: 6px; }
+#format button:hover { background: var(--bg-light); }
+#workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--side) 6px minmax(0, 1fr);
+}
+#rail {
+  background: var(--bg-dark);
+  overflow: auto;
+  min-height: 0;
+}
+#rail h2 {
+  margin: 0;
+  padding: 12px 14px 6px;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+.slide-row, .card {
+  cursor: grab;
+}
+.slide-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-left: 2px solid transparent;
+  color: var(--fg);
+}
+.slide-row .n { color: var(--muted); width: 1.4em; font-variant-numeric: tabular-nums; }
+.slide-row.current { background: var(--selection); border-left-color: var(--accent); color: var(--fg-bright); }
+.slide-row.drop-target, .card.drop-target { outline: 1px solid var(--accent); }
+.slide-row.dragging, .card.dragging { opacity: .45; pointer-events: none; }
+.grip { color: var(--muted); font-size: 12px; letter-spacing: -1px; }
+#divider-side, #v-divider, #h-divider {
+  background: var(--line);
+  cursor: col-resize;
+  position: relative;
+}
+#h-divider { cursor: row-resize; }
+#divider-side:hover, #v-divider:hover, #h-divider:hover,
+#divider-side.dragging, #v-divider.dragging, #h-divider.dragging { background: var(--accent); }
+#main { min-width: 0; min-height: 0; display: grid; }
+textarea {
+  margin: 0;
+  border: 0;
+  resize: none;
+  background: var(--bg-dark);
+  color: var(--fg-bright);
+  font: 14px/1.5 "JetBrains Mono", ui-monospace, monospace;
+  padding: 16px 18px;
+  min-width: 0;
+  min-height: 0;
+}
+textarea:focus { outline: none; }
+#preview { grid-area: preview; border: 0; width: 100%; height: 100%; background: #111; min-width: 0; min-height: 0; }
+#h-divider { grid-area: hdiv; }
+#slide-source { grid-area: slide; }
+#source { grid-area: source; }
+#v-divider { grid-area: vdiv; }
+#overview { grid-area: overview; }
+#overview {
+  display: none;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
+  padding: 16px;
+  overflow: auto;
+  background: var(--bg);
+}
+.card {
+  background: var(--bg-light);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.card .label { padding: 8px 10px; font-size: 13px; color: var(--fg); }
+.thumb { aspect-ratio: 16/9; overflow: hidden; background: #111; position: relative; }
+.thumb iframe {
+  width: 1280px;
+  height: 720px;
+  border: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0; left: 0;
+}
+body.mode-visual #main {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 6px var(--edit-h);
+  grid-template-areas: "preview" "hdiv" "slide";
+}
+body.mode-visual #source, body.mode-visual #v-divider, body.mode-visual #overview { display: none; }
+body.mode-markdown #format { display: none; }
+body.mode-markdown #main {
+  grid-template-columns: var(--split) 6px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "source vdiv preview";
+}
+body.mode-markdown #slide-source, body.mode-markdown #h-divider, body.mode-markdown #overview { display: none; }
+body.mode-overview #format, body.mode-overview #rail, body.mode-overview #divider-side { display: none; }
+body.mode-overview #workspace { grid-template-columns: minmax(0, 1fr); }
+body.mode-overview #main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "overview";
+}
+body.mode-overview #overview { display: grid; }
+body.mode-overview #preview, body.mode-overview #source, body.mode-overview #slide-source,
+body.mode-overview #v-divider, body.mode-overview #h-divider { display: none; }
+body.mode-present #format, body.mode-present #rail, body.mode-present #divider-side { display: none; }
+body.mode-present #workspace { grid-template-columns: minmax(0, 1fr); }
+body.mode-present #main {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "preview";
+}
+body.mode-present #source, body.mode-present #slide-source,
+body.mode-present #v-divider, body.mode-present #h-divider, body.mode-present #overview { display: none; }
+</style>
+</head>
+<body class="__BODY_CLASS__">
+<header>
+  <div class="brand">keynote</div>
+  <nav class="modes">
+    <button type="button" data-mode="visual">Visual</button>
+    <button type="button" data-mode="overview">Overview</button>
+    <button type="button" data-mode="markdown">Markdown</button>
+    <button type="button" data-mode="present">Present</button>
+  </nav>
+  <button id="save" type="button">Save</button>
+  <span id="status"></span>
+</header>
+<div id="format">
+  <button type="button" data-before="**" data-after="**" title="Bold">Bold</button>
+  <button type="button" data-before="*" data-after="*" title="Italic, Hype asterisks">Italic</button>
+  <button type="button" data-before="_" data-after="_" title="Underline, Hype underscores">Underline</button>
+  <button type="button" data-before="## " data-after="" title="Heading">Heading</button>
+  <button type="button" data-before="- " data-after="" title="List">List</button>
+  <button type="button" data-before="> " data-after="" title="Quote">Quote</button>
+  <button type="button" data-before="`" data-after="`" title="Code">Code</button>
+</div>
+<div id="workspace">
+  <aside id="rail"><h2>Slides</h2><div id="slide-list"></div></aside>
+  <div id="divider-side" title="Drag to resize the slide list"></div>
+  <div id="main">
+    <iframe id="preview" title="Slide"></iframe>
+    <div id="h-divider" title="Drag to resize the slide editor"></div>
+    <textarea id="slide-source" spellcheck="false" aria-label="Current slide"></textarea>
+    <textarea id="source" spellcheck="false" aria-label="Deck markdown"></textarea>
+    <div id="v-divider" title="Drag to resize the editor and preview"></div>
+    <div id="overview"></div>
+  </div>
+</div>
+<script id="boot" type="application/json">__BOOT_JSON__</script>
+<script>
+const boot = JSON.parse(document.getElementById('boot').textContent);
+const sourceEl = document.getElementById('source');
+const slideEl = document.getElementById('slide-source');
+const preview = document.getElementById('preview');
+const status = document.getElementById('status');
+const listEl = document.getElementById('slide-list');
+const overviewEl = document.getElementById('overview');
+let markdown = boot.markdown;
+let slides = boot.slides || [];
+let fullHtml = boot.html;
+let current = 0;
+let mode = boot.editor ? 'visual' : 'present';
+
+function explain(e) {
+  if (!e) return 'error';
+  if (typeof e === 'string') return e;
+  if (e.message) return e.message;
+  try { return JSON.stringify(e); } catch { return String(e); }
+}
+async function invoke(cmd, args) {
+  if (!window.__TAURI_INTERNALS__) throw new Error('open this window with keynote view');
+  return window.__TAURI_INTERNALS__.invoke(cmd, args);
+}
+function setStatus(text) { status.textContent = text || ''; }
+
+function paint() {
+  if (current >= slides.length) current = Math.max(0, slides.length - 1);
+  const card = slides[current];
+  if (mode === 'markdown') preview.srcdoc = fullHtml;
+  else if (card) preview.srcdoc = card.html;
+  renderRail();
+  renderOverview();
+}
+function renderRail() {
+  listEl.replaceChildren();
+  slides.forEach((slide, index) => {
+    const row = document.createElement('div');
+    row.className = 'slide-row' + (index === current ? ' current' : '');
+    const n = document.createElement('span');
+    n.className = 'n';
+    n.textContent = String(index + 1);
+    const grip = document.createElement('span');
+    grip.className = 'grip';
+    grip.textContent = '⋮⋮';
+    const title = document.createElement('span');
+    title.textContent = slide.title || ('Slide ' + (index + 1));
+    row.append(n, grip, title);
+    bindReorder(row, index);
+    listEl.append(row);
+  });
+}
+function renderOverview() {
+  overviewEl.replaceChildren();
+  slides.forEach((slide, index) => {
+    const card = document.createElement('article');
+    card.className = 'card';
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    const frame = document.createElement('iframe');
+    frame.title = slide.title || ('Slide ' + (index + 1));
+    frame.srcdoc = slide.html;
+    thumb.append(frame);
+    const label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = (index + 1) + '  ' + (slide.title || 'Untitled');
+    card.append(thumb, label);
+    bindReorder(card, index);
+    overviewEl.append(card);
+  });
+  requestAnimationFrame(fitThumbs);
+}
+function fitThumbs() {
+  document.querySelectorAll('.thumb').forEach((thumb) => {
+    const frame = thumb.querySelector('iframe');
+    if (!frame) return;
+    frame.style.transform = 'scale(' + (thumb.clientWidth / 1280) + ')';
+  });
+}
+function bindReorder(el, index) {
+  el.dataset.index = String(index);
+  el.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let dragging = false;
+    let hover = null;
+    const move = (ev) => {
+      if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 6) return;
+      dragging = true;
+      el.classList.add('dragging');
+      document.querySelectorAll('.drop-target').forEach((n) => n.classList.remove('drop-target'));
+      const under = document.elementFromPoint(ev.clientX, ev.clientY);
+      const target = under && under.closest('[data-index]');
+      hover = target && target !== el ? target : null;
+      if (hover) hover.classList.add('drop-target');
+    };
+    const up = () => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      const to = hover ? Number(hover.dataset.index) : NaN;
+      el.classList.remove('dragging');
+      document.querySelectorAll('.drop-target').forEach((n) => n.classList.remove('drop-target'));
+      hover = null;
+      if (!dragging) {
+        select(index);
+        if (el.classList.contains('card')) setMode('visual');
+        return;
+      }
+      if (Number.isFinite(to) && to !== index) moveSlide(index, to);
+    };
+    el.setPointerCapture(e.pointerId);
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+  });
+}
+function select(index) {
+  if (index < 0 || index >= slides.length) return;
+  current = index;
+  slideEl.value = slides[current].source || '';
+  paint();
+}
+function setMode(next) {
+  mode = next;
+  document.body.classList.remove('mode-visual', 'mode-overview', 'mode-markdown', 'mode-present');
+  document.body.classList.add('mode-' + mode);
+  document.querySelectorAll('.modes button').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+  });
+  if (mode === 'markdown') sourceEl.value = markdown;
+  if (mode === 'visual' && slides[current]) slideEl.value = slides[current].source || '';
+  paint();
+  if (mode === 'present') preview.contentWindow && preview.contentWindow.focus();
+  if (mode === 'overview') requestAnimationFrame(fitThumbs);
+}
+function apply(result, keep) {
+  markdown = result.markdown;
+  fullHtml = result.html;
+  slides = result.slides || [];
+  if (!keep || keep.source !== true) sourceEl.value = markdown;
+  if ((!keep || keep.slide !== true) && slides[current]) slideEl.value = slides[current].source || '';
+  paint();
+}
+let timer;
+function schedule(fn) {
+  setStatus('Editing');
+  clearTimeout(timer);
+  timer = setTimeout(fn, 180);
+}
+sourceEl.addEventListener('input', () => schedule(async () => {
+  try {
+    apply(await invoke('render_deck', { markdown: sourceEl.value }), { source: true });
+    setStatus('');
+  } catch (e) { setStatus(explain(e)); }
+}));
+slideEl.addEventListener('input', () => schedule(async () => {
+  try {
+    apply(await invoke('replace_slide', { markdown, index: current, slide: slideEl.value }), { slide: true });
+    setStatus('');
+  } catch (e) { setStatus(explain(e)); }
+}));
+async function moveSlide(from, to) {
+  try {
+    const result = await invoke('move_slide', { markdown, from, to });
+    if (current === from) current = to;
+    else if (from < current && to >= current) current -= 1;
+    else if (from > current && to <= current) current += 1;
+    apply(result);
+    setStatus('');
+  } catch (e) { setStatus(explain(e)); }
+}
+function activeEditor() { return mode === 'markdown' ? sourceEl : slideEl; }
+document.getElementById('format').addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  const el = activeEditor();
+  const before = btn.dataset.before || '';
+  const after = btn.dataset.after || '';
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const sel = el.value.slice(start, end) || 'text';
+  el.setRangeText(before + sel + after, start, end, 'end');
+  el.focus();
+  el.dispatchEvent(new Event('input'));
+});
+async function save() {
+  try {
+    await invoke('save_deck', { markdown });
+    setStatus('Saved');
+  } catch (e) { setStatus(explain(e)); }
+}
+document.getElementById('save').onclick = save;
+document.querySelectorAll('.modes button').forEach((btn) => {
+  btn.onclick = () => setMode(btn.dataset.mode);
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); return; }
+  if (e.target.matches('textarea')) return;
+  if (mode === 'visual' || mode === 'overview') {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') select(current + 1);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') select(current - 1);
+  }
+});
+function dragHandle(handle, onMove) {
+  handle.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    handle.classList.add('dragging');
+    handle.setPointerCapture(e.pointerId);
+    const move = (ev) => onMove(ev);
+    const up = () => {
+      handle.classList.remove('dragging');
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+  });
+}
+dragHandle(document.getElementById('divider-side'), (ev) => {
+  const rect = document.getElementById('workspace').getBoundingClientRect();
+  const width = Math.min(420, Math.max(160, ev.clientX - rect.left));
+  document.documentElement.style.setProperty('--side', width + 'px');
+});
+dragHandle(document.getElementById('v-divider'), (ev) => {
+  const rect = document.getElementById('main').getBoundingClientRect();
+  let ratio = (ev.clientX - rect.left) / rect.width;
+  ratio = Math.min(0.72, Math.max(0.24, ratio));
+  document.documentElement.style.setProperty('--split', (ratio * 100) + '%');
+});
+dragHandle(document.getElementById('h-divider'), (ev) => {
+  const rect = document.getElementById('main').getBoundingClientRect();
+  const height = Math.min(rect.height * 0.6, Math.max(96, rect.bottom - ev.clientY));
+  document.documentElement.style.setProperty('--edit-h', height + 'px');
+  fitThumbs();
+});
+window.addEventListener('resize', fitThumbs);
+sourceEl.value = markdown;
+if (slides[0]) slideEl.value = slides[0].source || '';
+setMode(mode);
+</script>
+</body>
+</html>

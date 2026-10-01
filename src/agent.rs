@@ -63,7 +63,7 @@ CLI (exit 0 ok / 1 fail, errors on stderr, --json everywhere):
   keynote open talk.md                    # export HTML, open browser, present in terminal
   keynote present talk.md                 # terminal
   keynote view talk.md                    # native window (cargo build --features native-view)
-  keynote view talk.md --editor           # markdown beside the same preview
+  keynote view talk.md --editor           # Visual / Overview / Markdown, drag to reorder
 "#;
 
 pub const SKILL_TEXT: &str = r#"---

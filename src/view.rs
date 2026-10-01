@@ -90,118 +90,172 @@ pub fn save_markdown(path: &Path, markdown: &str) -> Result<(), String> {
     std::fs::write(path, markdown).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
+/// One slide as the editor shows it: title in the rail, source for the
+/// single-slide editor, HTML for the thumbnail and the visual canvas.
+#[derive(Debug, serde::Serialize)]
+pub struct SlideCard {
+    pub title: String,
+    pub source: String,
+    pub html: String,
+}
+
+/// Full deck plus per-slide cards, so Visual, Overview, and Markdown share one render.
+#[derive(Debug, serde::Serialize)]
+pub struct DeckRender {
+    pub markdown: String,
+    pub html: String,
+    pub slides: Vec<SlideCard>,
+}
+
+/// Split a deck into its frontmatter prefix and slide bodies.
+pub fn split_editable(markdown: &str) -> Result<(String, Vec<String>), String> {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut i = 0usize;
+    let mut prefix = String::new();
+    if lines.first().map(|l| l.trim() == "---").unwrap_or(false) {
+        let mut seen = 0;
+        while i < lines.len() {
+            if lines[i].trim() == "---" {
+                seen += 1;
+            }
+            prefix.push_str(lines[i]);
+            prefix.push('\n');
+            i += 1;
+            if seen == 2 {
+                break;
+            }
+        }
+    }
+    let mut slides = Vec::new();
+    let mut cur = String::new();
+    while i < lines.len() {
+        if lines[i].trim() == "---" {
+            let text = cur.trim().to_string();
+            if !text.is_empty() {
+                slides.push(text);
+            }
+            cur.clear();
+            i += 1;
+            continue;
+        }
+        cur.push_str(lines[i]);
+        cur.push('\n');
+        i += 1;
+    }
+    let text = cur.trim().to_string();
+    if !text.is_empty() {
+        slides.push(text);
+    }
+    if slides.is_empty() {
+        return Err("no slides".into());
+    }
+    Ok((prefix.trim_end().to_string(), slides))
+}
+
+pub fn join_editable(prefix: &str, slides: &[String]) -> String {
+    let body = slides
+        .iter()
+        .map(|s| s.trim())
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+    if prefix.is_empty() {
+        format!("{body}\n")
+    } else {
+        format!("{prefix}\n\n{body}\n")
+    }
+}
+
+/// Move the slide at `from` so it lands at `to`. Frontmatter stays put.
+pub fn reorder_markdown(markdown: &str, from: usize, to: usize) -> Result<String, String> {
+    let (prefix, mut slides) = split_editable(markdown)?;
+    if from >= slides.len() || to >= slides.len() {
+        return Err("slide index out of range".into());
+    }
+    if from != to {
+        let slide = slides.remove(from);
+        slides.insert(to, slide);
+    }
+    Ok(join_editable(&prefix, &slides))
+}
+
+/// Replace one slide body. An empty body is refused so the slide is not dropped.
+pub fn replace_slide_markdown(
+    markdown: &str,
+    index: usize,
+    slide: &str,
+) -> Result<String, String> {
+    if slide.trim().is_empty() {
+        return Err("a slide needs some text".into());
+    }
+    let (prefix, mut slides) = split_editable(markdown)?;
+    if index >= slides.len() {
+        return Err("slide index out of range".into());
+    }
+    slides[index] = slide.trim().to_string();
+    Ok(join_editable(&prefix, &slides))
+}
+
+pub fn render_model(markdown: &str, root: &Path) -> Result<DeckRender, String> {
+    let deck = Deck::from_markdown(markdown);
+    if deck.slides.is_empty() {
+        return Err("no slides".into());
+    }
+    let (_, blocks) = split_editable(markdown)?;
+    let html = export::export_html(&deck, root, None, None);
+    let slides = deck
+        .slides
+        .iter()
+        .enumerate()
+        .map(|(i, s)| SlideCard {
+            title: s
+                .title
+                .clone()
+                .unwrap_or_else(|| format!("Slide {}", i + 1)),
+            source: blocks.get(i).cloned().unwrap_or_else(|| s.source.clone()),
+            html: export::slide_html(&deck, root, i, None, None),
+        })
+        .collect();
+    Ok(DeckRender {
+        markdown: markdown.to_string(),
+        html,
+        slides,
+    })
+}
+
 fn editor_page(view: &NativeView) -> String {
+    let rendered = render_model(&view.source, &view.root).unwrap_or(DeckRender {
+        markdown: view.source.clone(),
+        html: view.html.clone(),
+        slides: Vec::new(),
+    });
     #[derive(serde::Serialize)]
     struct Boot<'a> {
         title: &'a str,
         markdown: &'a str,
         html: &'a str,
         editor: bool,
+        slides: &'a [SlideCard],
     }
     let boot = serde_json::to_string(&Boot {
         title: &view.title,
         markdown: &view.source,
-        html: &view.html,
+        html: &rendered.html,
         editor: view.editor,
+        slides: &rendered.slides,
     })
     .unwrap_or_else(|_| "{}".into())
     .replace('<', "\\u003c");
-    let body_class = if view.editor { "editing" } else { "" };
-    let present_active = if view.editor { "" } else { " active" };
-    let edit_active = if view.editor { " active" } else { "" };
-    format!(
-        r#"<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{title}</title>
-<style>
-html,body {{ height:100%; margin:0; }}
-body {{ display:flex; flex-direction:column; background:#111; color:#eee; font-family:system-ui,sans-serif; }}
-header {{ display:flex; gap:8px; align-items:center; padding:8px 12px; background:#181818; border-bottom:1px solid #333; }}
-header strong {{ margin-right:8px; }}
-button {{ background:#2a2a2a; color:#eee; border:1px solid #444; border-radius:6px; padding:6px 12px; cursor:pointer; }}
-button.active {{ border-color:#7aa2f7; }}
-#status {{ margin-left:auto; opacity:.75; font-size:14px; }}
-#stage {{ flex:1; display:flex; min-height:0; }}
-textarea {{ display:none; width:42%; box-sizing:border-box; margin:0; border:0; border-right:1px solid #333; background:#1a1b26; color:#c0caf5; font:15px/1.45 ui-monospace,monospace; padding:16px; resize:none; }}
-iframe {{ flex:1; border:0; background:#111; width:100%; height:100%; }}
-body.editing textarea {{ display:block; }}
-</style>
-</head>
-<body class="{body_class}">
-<header>
-<strong id="title"></strong>
-<button id="present" type="button" class="{present_active}">Present</button>
-<button id="edit" type="button" class="{edit_active}">Editor</button>
-<button id="save" type="button">Save</button>
-<span id="status"></span>
-</header>
-<div id="stage">
-<textarea id="source" spellcheck="false"></textarea>
-<iframe id="preview" title="Slide preview"></iframe>
-</div>
-<script id="boot" type="application/json">{boot}</script>
-<script>
-const boot = JSON.parse(document.getElementById('boot').textContent);
-const source = document.getElementById('source');
-const preview = document.getElementById('preview');
-const status = document.getElementById('status');
-source.value = boot.markdown;
-preview.srcdoc = boot.html;
-document.getElementById('title').textContent = boot.title;
-function setMode(editing) {{
-  document.body.classList.toggle('editing', editing);
-  document.getElementById('edit').classList.toggle('active', editing);
-  document.getElementById('present').classList.toggle('active', !editing);
-  if (!editing) preview.contentWindow && preview.contentWindow.focus();
-}}
-setMode(boot.editor);
-document.getElementById('present').onclick = () => setMode(false);
-document.getElementById('edit').onclick = () => setMode(true);
-function explain(e) {{
-  if (!e) return 'error';
-  if (typeof e === 'string') return e;
-  if (e.message) return e.message;
-  try {{ return JSON.stringify(e); }} catch {{ return String(e); }}
-}}
-async function invoke(cmd, args) {{
-  if (!window.__TAURI_INTERNALS__) throw new Error('open this window with keynote view');
-  return window.__TAURI_INTERNALS__.invoke(cmd, args);
-}}
-let timer;
-source.addEventListener('input', () => {{
-  status.textContent = 'Editing';
-  clearTimeout(timer);
-  timer = setTimeout(refresh, 200);
-}});
-async function refresh() {{
-  try {{
-    preview.srcdoc = await invoke('preview_html', {{ markdown: source.value }});
-    if (status.textContent === 'Editing') status.textContent = '';
-  }} catch (e) {{ status.textContent = explain(e); }}
-}}
-async function save() {{
-  try {{
-    await invoke('save_deck', {{ markdown: source.value }});
-    status.textContent = 'Saved';
-  }} catch (e) {{ status.textContent = explain(e); }}
-}}
-document.getElementById('save').onclick = save;
-document.addEventListener('keydown', (e) => {{
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') {{ e.preventDefault(); save(); }}
-}});
-</script>
-</body>
-</html>
-"#,
-        title = html_escape(&view.title),
-        body_class = body_class,
-        present_active = present_active,
-        edit_active = edit_active,
-        boot = boot,
-    )
+    let body_class = if view.editor {
+        "mode-visual"
+    } else {
+        "mode-present"
+    };
+    include_str!("editor_shell.html")
+        .replace("__TITLE__", &html_escape(&view.title))
+        .replace("__BODY_CLASS__", body_class)
+        .replace("__BOOT_JSON__", &boot)
 }
+
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -266,7 +320,13 @@ fn open_window(view: NativeView) -> Result<(), String> {
         .map_err(|e| format!("view url: {e}"))?;
     tauri::Builder::default()
         .manage(EditorState { path, root: root.clone() })
-        .invoke_handler(tauri::generate_handler![preview_html, save_deck])
+        .invoke_handler(tauri::generate_handler![
+            preview_html,
+            save_deck,
+            render_deck,
+            move_slide,
+            replace_slide
+        ])
         .register_uri_scheme_protocol("deck", move |_ctx, request| {
             let range = request
                 .headers()
@@ -329,6 +389,36 @@ fn preview_html(markdown: String, state: tauri::State<'_, EditorState>) -> Resul
 #[tauri::command]
 fn save_deck(markdown: String, state: tauri::State<'_, EditorState>) -> Result<(), String> {
     save_markdown(&state.path, &markdown)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn render_deck(markdown: String, state: tauri::State<'_, EditorState>) -> Result<DeckRender, String> {
+    render_model(&markdown, &state.root)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn move_slide(
+    markdown: String,
+    from: usize,
+    to: usize,
+    state: tauri::State<'_, EditorState>,
+) -> Result<DeckRender, String> {
+    let markdown = reorder_markdown(&markdown, from, to)?;
+    render_model(&markdown, &state.root)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn replace_slide(
+    markdown: String,
+    index: usize,
+    slide: String,
+    state: tauri::State<'_, EditorState>,
+) -> Result<DeckRender, String> {
+    let markdown = replace_slide_markdown(&markdown, index, &slide)?;
+    render_model(&markdown, &state.root)
 }
 
 #[cfg(not(feature = "native-view"))]
@@ -586,9 +676,12 @@ mod tests {
         assert_eq!(deck_asset(&view, "/images/missing.png", None).status, 404);
         let app = deck_asset(&view, "/app.html", None);
         let page = std::str::from_utf8(&app.body).unwrap();
-        assert!(page.contains("id=\"edit\""));
-        assert!(page.contains(">Editor<"));
-        assert!(page.contains("class=\"editing\""));
+        assert!(page.contains("data-mode=\"visual\""));
+        assert!(page.contains("data-mode=\"overview\""));
+        assert!(page.contains("data-mode=\"markdown\""));
+        assert!(page.contains("id=\"divider-side\""));
+        assert!(page.contains("id=\"format\""));
+        assert!(page.contains("mode-visual"));
         assert!(page.contains("# Slide"));
         assert_eq!(
             deck_asset(&view, "/images/pic.png", Some("bytes=99-100")).status,
@@ -611,6 +704,21 @@ mod tests {
         assert!(html.contains("Just this"), "{html}");
         assert!(render_markdown("", &dir).unwrap_err().contains("no slides"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reorder_keeps_frontmatter_and_moves_the_slide() {
+        let md = "---\ntitle: T\n---\n\n# A\n\n---\n\n# B\n\n---\n\n# C\n";
+        let out = reorder_markdown(md, 0, 2).unwrap();
+        let deck = crate::deck::Deck::from_markdown(&out);
+        assert_eq!(deck.frontmatter.title.as_deref(), Some("T"));
+        assert_eq!(deck.slides[0].title.as_deref(), Some("B"));
+        assert_eq!(deck.slides[1].title.as_deref(), Some("C"));
+        assert_eq!(deck.slides[2].title.as_deref(), Some("A"));
+        let edited = replace_slide_markdown(&out, 0, "# B2\n\nstill here").unwrap();
+        let deck = crate::deck::Deck::from_markdown(&edited);
+        assert_eq!(deck.slides[0].title.as_deref(), Some("B2"));
+        assert!(replace_slide_markdown(md, 0, "  \n").is_err());
     }
 
     #[test]

@@ -41,7 +41,7 @@ Successful `new`/`export` writes timestamped `.bak` copies to `.keynote-backups/
 
 ## Native view
 
-`keynote view talk.md` opens the deck in a native window. It loads the same HTML renderer as `export` (arrow keys, Space, and the on-screen controls). **Editor** splits the Markdown beside that preview; edits re-render as you type, and Save writes the file (a `.bak` is kept). `--editor` starts in that pane.
+`keynote view talk.md` opens the deck in a native window, in the Omarchy Tokyo Night chrome. **Visual** edits the current slide (the `---` separators stay in the file). **Overview** is a grid of the slides. **Markdown** is the whole file beside the preview. Drag slides in the list or the grid to reorder them, and drag the dividers to resize the list, the editor, and the preview. Save writes the file (a `.bak` is kept). `--editor` starts in Visual.
 
 ```sh
 keynote view talk.md --editor

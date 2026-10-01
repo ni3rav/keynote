@@ -416,6 +416,16 @@ fn editor_page(view: &NativeView) -> String {
 }
 
 
+fn help_asset(rel: &str) -> Option<(&'static str, &'static [u8])> {
+    match rel {
+        "help/editor.png" => Some(("image/png", include_bytes!("../assets/help/editor.png"))),
+        "help/reorder.png" => Some(("image/png", include_bytes!("../assets/help/reorder.png"))),
+        "help/tour.mp4" => Some(("video/mp4", include_bytes!("../assets/help/tour.mp4"))),
+        "help/tour.vtt" => Some(("text/vtt; charset=utf-8", include_bytes!("../assets/help/tour.vtt"))),
+        _ => None,
+    }
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -427,6 +437,9 @@ fn html_escape(s: &str) -> String {
 /// seeks with it.
 pub fn deck_asset(view: &NativeView, request_path: &str, range: Option<&str>) -> DeckAsset {
     let rel = request_rel(request_path);
+    if let Some((content_type, bytes)) = help_asset(&rel) {
+        return file_asset(content_type, bytes.to_vec(), range);
+    }
     if rel == "app.html" {
         return DeckAsset {
             status: 200,
@@ -1059,6 +1072,13 @@ mod tests {
         assert!(page.contains("id=\"format\""));
         assert!(page.contains("mode-visual"));
         assert!(page.contains("# Slide"));
+        assert!(page.contains("id=\"help-search\""));
+        assert!(page.contains("Getting started"));
+        assert!(page.contains("Start guided tour"));
+        let shot = deck_asset(&view, "/help/editor.png", None);
+        assert_eq!(shot.status, 200);
+        assert_eq!(shot.content_type, "image/png");
+        assert!(shot.body.starts_with(b"\x89PNG"));
         assert_eq!(
             deck_asset(&view, "/images/pic.png", Some("bytes=99-100")).status,
             416

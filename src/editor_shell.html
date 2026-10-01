@@ -219,6 +219,40 @@ body.mode-present #main {
 }
 body.mode-present #source, body.mode-present #slide-source,
 body.mode-present #v-divider, body.mode-present #h-divider, body.mode-present #overview { display: none; }
+#help { display: none; flex: 1; min-height: 0; background: var(--bg); }
+body.mode-help #format, body.mode-help #workspace { display: none; }
+body.mode-help #help { display: block; }
+.help-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); height: 100%; min-height: 0; }
+.help-nav { background: var(--bg-dark); border-right: 1px solid var(--line); overflow: auto; padding: 12px; }
+#help-search { width: 100%; box-sizing: border-box; margin: 0 0 12px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg-bright); font: inherit; }
+.help-cat { margin: 14px 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.help-nav button { display: block; width: 100%; text-align: left; background: transparent; color: var(--fg); border: 0; border-radius: 6px; padding: 7px 8px; cursor: pointer; font: inherit; }
+.help-nav button[aria-current="true"] { background: var(--selection); color: var(--fg-bright); }
+#start-tour { margin-top: 16px; width: 100%; border: 1px solid var(--accent); color: var(--fg-bright); background: transparent; border-radius: 8px; padding: 8px 10px; cursor: pointer; font: inherit; }
+#help-doc { overflow: auto; padding: 28px 36px 48px; max-width: 860px; }
+#help-doc h1 { margin: 0 0 8px; color: var(--fg-bright); font-size: 28px; }
+#help-doc h2 { margin: 22px 0 8px; color: var(--fg-bright); font-size: 18px; }
+#help-doc p, #help-doc li { line-height: 1.55; }
+#help-doc ol { padding-left: 1.2em; }
+#help-doc figure { margin: 16px 0; }
+#help-doc img, #help-doc video { width: 100%; border-radius: 10px; border: 1px solid var(--line); background: #111; }
+#help-doc figcaption { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+#tour { position: fixed; inset: 0; z-index: 20; pointer-events: none; background: rgba(8, 8, 14, .35); }
+#tour[hidden] { display: none; }
+#tour-card { pointer-events: auto; position: absolute; display: flex; flex-direction: column; gap: 8px; width: min(320px, calc(100% - 24px)); background: #24283b; color: #c0caf5; border: 1px solid var(--accent); border-radius: 10px; padding: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+#tour-card h2 { margin: 0; font-size: 16px; color: #c0caf5; }
+#tour-text { margin: 0; color: #a9b1d6; font-size: 14px; line-height: 1.45; }
+#tour-card .row { display: flex; gap: 8px; }
+#tour-card button { border: 1px solid var(--line); background: transparent; color: var(--fg-bright); border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
+.tour-target { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+@media (max-width: 800px) {
+  header { height: auto; flex-wrap: wrap; padding: 6px 8px; }
+  .modes { width: 100%; overflow-x: auto; }
+  .help-layout { grid-template-columns: 1fr; }
+  .help-nav { border-right: 0; border-bottom: 1px solid var(--line); }
+  #help-doc { padding: 18px 16px 32px; }
+}
 </style>
 </head>
 <body class="__BODY_CLASS__">
@@ -230,6 +264,7 @@ body.mode-present #v-divider, body.mode-present #h-divider, body.mode-present #o
     <button type="button" data-mode="markdown">Markdown</button>
     <button type="button" data-mode="presenter" title="Slide plus speaker notes">Presenter</button>
     <button type="button" data-mode="present" title="Audience view">Present</button>
+    <button type="button" data-mode="help" title="Help and user guide (F1)">Help</button>
   </nav>
   <button id="save" type="button">Save</button>
   <span id="status"></span>
@@ -269,6 +304,28 @@ body.mode-present #v-divider, body.mode-present #h-divider, body.mode-present #o
     <h2>Speaker notes</h2>
     <textarea id="notes" spellcheck="true" placeholder="Only you see this. It stays off the slide."></textarea>
   </aside>
+</div>
+<div id="help">
+  <div class="help-layout">
+    <nav class="help-nav" aria-label="Help topics">
+      <label class="sr" for="help-search">Search help</label>
+      <input id="help-search" type="search" placeholder="Search help" autocomplete="off">
+      <div id="help-topics"></div>
+      <button id="start-tour" type="button">Start guided tour</button>
+    </nav>
+    <article id="help-doc" tabindex="-1" aria-live="polite"></article>
+  </div>
+</div>
+<div id="tour" hidden role="dialog" aria-modal="true" aria-labelledby="tour-title">
+  <div id="tour-card">
+    <h2 id="tour-title"></h2>
+    <div id="tour-text"></div>
+    <div class="row">
+      <button type="button" id="tour-back">Back</button>
+      <button type="button" id="tour-next">Next</button>
+      <button type="button" id="tour-skip">Skip</button>
+    </div>
+  </div>
 </div>
 <script id="boot" type="application/json">__BOOT_JSON__</script>
 <script>
@@ -408,7 +465,7 @@ function select(index) {
 }
 function setMode(next) {
   mode = next;
-  document.body.classList.remove('mode-visual', 'mode-overview', 'mode-markdown', 'mode-present', 'mode-presenter');
+  document.body.classList.remove('mode-visual', 'mode-overview', 'mode-markdown', 'mode-present', 'mode-presenter', 'mode-help');
   document.body.classList.add('mode-' + mode);
   document.querySelectorAll('.modes button').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.mode === mode);
@@ -538,6 +595,7 @@ document.querySelectorAll('.modes button').forEach((btn) => {
 });
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); save(); return; }
+  if (e.key === 'F1') { e.preventDefault(); setMode('help'); return; }
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
     e.preventDefault();
     const prev = undoStack.pop();
@@ -594,6 +652,109 @@ dragHandle(document.getElementById('h-divider'), (ev) => {
   fitThumbs();
 });
 window.addEventListener('resize', fitThumbs);
+
+const helpTopics = [
+  { id: 'start', cat: 'Getting started', title: 'Your first deck',
+    html: '<p>keynote stores a talk as Markdown. Slides are separated by a line that contains only <code>---</code>.</p><ol><li>Run <code>keynote</code> and choose New deck, or run <code>keynote talk.md</code>.</li><li>Stay in Visual. The list on the left is every slide. The canvas is the current one.</li><li>Type the slide in the editor under the canvas. The preview updates, then the file saves itself.</li><li>Press Save if you want to write it immediately. The header says Saved when the file is on disk.</li></ol><figure><img src="help/editor.png" alt="Visual mode with a centered slide, the properties panel, and speaker notes."><figcaption>Visual mode: slide list, preview, slide editor, and the properties panel.</figcaption></figure>' },
+  { id: 'modes', cat: 'Getting started', title: 'Modes',
+    html: '<ol><li>Visual edits one slide. The <code>---</code> separators stay in the file.</li><li>Overview is every slide as a card. Click a card to jump back to Visual.</li><li>Markdown is the whole file beside the preview.</li><li>Presenter keeps the current slide and its speaker notes.</li><li>Present is the audience view. Arrow keys and Space move between slides.</li><li>Help is this guide. F1 opens it from anywhere.</li></ol>' },
+  { id: 'reorder', cat: 'Editing', title: 'Reorder and resize',
+    html: '<ol><li>Drag a row in the slide list. Drop it on another row.</li><li>Or open Overview and drag a card.</li><li>Drag the bar beside the list to make it wider or narrower.</li><li>In Visual, drag the bar above the slide editor to give the notes more room.</li><li>In Markdown, drag the bar between the file and the preview.</li></ol><figure><img src="help/reorder.png" alt="Slide list after Thank you was dragged to the first position."><figcaption>Thank you is first. The preview and the slide editor followed.</figcaption></figure><figure><video controls preload="metadata"><source src="help/tour.mp4" type="video/mp4"><track kind="captions" src="help/tour.vtt" srclang="en" label="English" default></video><figcaption>Reorder a slide, widen the list, open Overview, then resize the Markdown split.</figcaption></figure>' },
+  { id: 'format', cat: 'Editing', title: 'Text formatting',
+    html: '<p>Select text in the slide editor or the Markdown editor, then use the bar.</p><ul><li>Bold wraps the selection in <code>**</code>.</li><li>Italic uses a single <code>*</code>, which is the Hype style.</li><li>Underline uses <code>_underscores_</code>.</li><li>Heading, List, Quote, and Code insert Markdown at the cursor.</li></ul><p>Alignment is not a character style. Set Align and Vertical in Properties. That writes <code>@align</code> and <code>@valign</code> into the slide and keeps them out of the slide editor.</p>' },
+  { id: 'notes', cat: 'Speaker notes', title: 'Notes for one slide',
+    html: '<ol><li>Select the slide.</li><li>Type in Speaker notes. The words are stored in a <code>:::notes</code> block and are not drawn on the slide.</li><li>Open Presenter to read them beside the slide.</li><li>Reorder, duplicate, or delete the slide and the notes go with it.</li><li>In an exported HTML deck, press <kbd>n</kbd> to show or hide notes.</li></ol>' },
+  { id: 'media', cat: 'Media', title: 'Images, video, and backgrounds',
+    html: '<ol><li>Select the slide and choose Image or Video. The file is copied into <code>images/</code> or <code>videos/</code>.</li><li>Or drop a file onto the window. It attaches to the current slide.</li><li>Fit shows the whole picture. Span fills the slide.</li><li>A slide holds one image or video. Inserting another replaces it.</li><li>Background accepts <code>#112233</code>, <code>gradient=#111111,#333333</code>, or <code>image=photo.jpg</code>.</li></ol><p>Remote video addresses are not embedded. Use a local file.</p>' },
+  { id: 'keys', cat: 'Shortcuts', title: 'Keyboard',
+    html: '<ul><li><kbd>Ctrl</kbd>+<kbd>S</kbd> save</li><li><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo</li><li><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate the slide</li><li><kbd>F1</kbd> help</li><li>In Visual or Overview, arrow keys change the selected slide when you are not typing.</li><li>In Present, arrows, Space, and Enter advance. <kbd>n</kbd> toggles notes in an exported HTML file.</li></ul>' }
+];
+let helpId = 'start';
+function renderHelp(filter) {
+  const q = (filter || '').trim().toLowerCase();
+  const nav = document.getElementById('help-topics');
+  nav.replaceChildren();
+  let lastCat = '';
+  const visible = helpTopics.filter((t) => !q || (t.cat + ' ' + t.title + ' ' + t.html).toLowerCase().includes(q));
+  visible.forEach((topic) => {
+    if (topic.cat !== lastCat) {
+      lastCat = topic.cat;
+      const h = document.createElement('div');
+      h.className = 'help-cat';
+      h.textContent = topic.cat;
+      nav.append(h);
+    }
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = topic.title;
+    btn.setAttribute('aria-current', topic.id === helpId ? 'true' : 'false');
+    btn.onclick = () => { helpId = topic.id; renderHelp(document.getElementById('help-search').value); };
+    nav.append(btn);
+  });
+  const topic = helpTopics.find((t) => t.id === helpId) || visible[0] || helpTopics[0];
+  if (topic && !visible.includes(topic) && visible[0]) helpId = visible[0].id;
+  const shown = helpTopics.find((t) => t.id === helpId) || helpTopics[0];
+  const doc = document.getElementById('help-doc');
+  if (!visible.length) {
+    doc.innerHTML = '<h1>No matches</h1><p>Try another word, or clear the search.</p>';
+    return;
+  }
+  doc.innerHTML = '<p class="help-cat">' + shown.cat + '</p><h1>' + shown.title + '</h1>' + shown.html;
+}
+document.getElementById('help-search').addEventListener('input', (e) => renderHelp(e.target.value));
+document.getElementById('start-tour').onclick = () => startTour();
+renderHelp('');
+
+const tourSteps = [
+  { mode: 'visual', sel: '[data-mode="visual"]', title: 'Visual', text: 'This is where you edit one slide. The preview is the same renderer used for export.' },
+  { mode: 'visual', sel: '#rail', title: 'Slide list', text: 'Drag a row onto another row to reorder. Duplicate and Delete sit above the list.' },
+  { mode: 'visual', sel: '#format', title: 'Formatting', text: 'Select text, then Bold, Italic, Underline, Heading, List, Quote, or Code.' },
+  { mode: 'visual', sel: '#inspector', title: 'Properties', text: 'Align, vertical position, background, and Fit or Span live here. Image and Video insert a local file.' },
+  { mode: 'visual', sel: '#notes', title: 'Speaker notes', text: 'Notes stay off the slide. Open Presenter to read them while you talk.' },
+  { mode: 'visual', sel: '#save', title: 'Save', text: 'Edits also save themselves. The header says Saved when the file is written.' },
+  { mode: 'help', sel: '[data-mode="help"]', title: 'Help', text: 'F1 brings you back here. Search the topics on the left.' }
+];
+let tourAt = 0;
+function placeTour() {
+  const step = tourSteps[tourAt];
+  setMode(step.mode);
+  document.querySelectorAll('.tour-target').forEach((n) => n.classList.remove('tour-target'));
+  const el = document.querySelector(step.sel);
+  const card = document.getElementById('tour-card');
+  document.getElementById('tour-title').textContent = step.title + ' (' + (tourAt + 1) + '/' + tourSteps.length + ')';
+  document.getElementById('tour-text').textContent = step.text;
+  document.getElementById('tour-back').disabled = tourAt === 0;
+  document.getElementById('tour-next').textContent = tourAt === tourSteps.length - 1 ? 'Done' : 'Next';
+  if (!el) return;
+  el.classList.add('tour-target');
+  const r = el.getBoundingClientRect();
+  let top = r.bottom + 10;
+  if (top + 160 > window.innerHeight) top = Math.max(12, r.top - 160);
+  card.style.top = top + 'px';
+  card.style.left = Math.min(window.innerWidth - 336, Math.max(12, r.left)) + 'px';
+}
+function startTour() {
+  tourAt = 0;
+  document.getElementById('tour').hidden = false;
+  placeTour();
+  document.getElementById('tour-next').focus();
+}
+function endTour() {
+  document.getElementById('tour').hidden = true;
+  document.querySelectorAll('.tour-target').forEach((n) => n.classList.remove('tour-target'));
+}
+document.getElementById('tour-next').onclick = () => {
+  if (tourAt >= tourSteps.length - 1) { endTour(); setMode('help'); return; }
+  tourAt += 1;
+  placeTour();
+};
+document.getElementById('tour-back').onclick = () => { if (tourAt > 0) { tourAt -= 1; placeTour(); } };
+document.getElementById('tour-skip').onclick = () => { endTour(); setMode('help'); };
+document.addEventListener('keydown', (e) => {
+  if (document.getElementById('tour').hidden) return;
+  if (e.key === 'Escape') { e.preventDefault(); endTour(); }
+});
+
 sourceEl.value = markdown;
 if (slides[0]) slideEl.value = slides[0].body || '';
 setMode(mode);

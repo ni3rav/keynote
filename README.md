@@ -1,83 +1,77 @@
 # keynote
 
-Markdown-powered slides in your terminal — a portable, Rust-first Hype-alternative.
+Markdown slides. Check and export them from the terminal, or edit and present them in a desktop window.
 
-Write decks in Markdown, validate and preview headlessly (agent-friendly), present in the terminal, and share as animated HTML, static PDF, or PPTX with embedded video.
+## Install locally
 
-## Install (binary)
-
-Download `keynote` from the latest GitHub release, then:
+You need Rust 1.90 or newer (`rustup` is fine). On Linux, the desktop window also needs WebKit:
 
 ```sh
-chmod +x keynote
-./keynote --help
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 ```
 
-Requires headless Chromium (`chromium-browser`/`chromium`/`google-chrome`) for `render` and PDF/PPTX export, and `ffmpeg` for video/animated conversion. Everything else is a single static binary.
-
-## Quickstart
-
-```sh
-keynote new talk.md --title "My talk" --theme tokyo-night
-keynote check talk.md
-keynote slides talk.md
-keynote render talk.md -o slides/ --width 1920
-keynote export talk.md talk.html
-keynote export talk.md talk.pdf
-keynote export talk.md talk.pptx
-keynote present talk.md
-keynote view talk.md
-```
-
-Agents: start with `keynote format` (whole slide format, one read) and `keynote skill` / `keynote skill install`.
-
-## Format
-
-Optional frontmatter (`title/author/theme/font`), slides split on exact `---` lines, `![fit|span|loop|muted|autoplay=false|background=blur|auto|theme|#fff](file)` media with basename lookup in `images/`/`videos/`. See `keynote format`.
-
-## Safety net
-
-Successful `new`/`export` writes timestamped `.bak` copies to `.keynote-backups/` beside the deck plus a recovery snapshot under `~/.local/state/keynote/recovery/` (or `$XDG_STATE_HOME`). `history` lists, `restore` rolls back. Unfinished code fences block export; `render` still emits PNGs with an error banner so agents can see failures.
-
-## Desktop app
-
-Decks are Markdown (`.md`). With the native view compiled in:
+Build, install, and open:
 
 ```sh
 cargo build --release --features native-view
 ./target/release/keynote install
 keynote
-keynote talk.md
+```
+
+`keynote install` copies the binary to `~/.local/bin/keynote` and adds a desktop launcher. If `keynote` is not found, add this to your shell profile:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Then:
+
+```sh
+keynote talk.md          # open a deck in the editor
 keynote --help
 keynote --version
 ```
 
-`keynote` opens the editor. `keynote talk.md` opens that deck. `keynote install` copies the binary to `~/.local/bin` and writes a desktop launcher (`Exec=keynote %f`), so the shortcut and the CLI are the same program. `~/.local/bin` has to be on `PATH`.
+`render`, PDF, and PPTX also need headless Chromium (`chromium` or `google-chrome`). PPTX video needs `ffmpeg`.
 
-Visual mode edits one slide at a time. Speaker notes (`:::notes`), alignment (`@align`, `@valign`), and backgrounds (`@background color=#112233`, `gradient=#111,#333`, or `image=photo.jpg`) are stored in the Markdown and kept off the slide copy. Presenter mode shows the notes beside the slide. In an exported HTML deck, press `n` to show them.
-
-Images and videos are one per slide (`![fit](file)` or `![span](file)`), copied into `images/` or `videos/`. Fit and span are the positioning controls. A file dropped on the window is attached to the current slide. Freeform x/y boxes, rotation, and crop handles are not part of this Markdown deck.
-
-Undo is Ctrl+Z, redo is Ctrl+Y, duplicate is Ctrl+D. Edits autosave. Help (F1) is the user guide: searchable topics, screenshots, a captioned tour video, and a guided tour of the buttons. `@reveal` on a slide shows bullets one at a time in Present and Presenter (Space or the right arrow). The editor still shows the whole slide.
-
-## Native view
-
-`keynote view talk.md` opens the deck in a native window, in the Omarchy Tokyo Night chrome. **Visual** edits the current slide (the `---` separators stay in the file). **Overview** is a grid of the slides. **Markdown** is the whole file beside the preview. Drag slides in the list or the grid to reorder them, and drag the dividers to resize the list, the editor, and the preview. Save writes the file (a `.bak` is kept). `--editor` starts in Visual.
+A terminal-only build, without the window:
 
 ```sh
-keynote view talk.md --editor
+cargo build --release
+./target/release/keynote --help
 ```
 
-Build that binary with WebKit installed:
+## Use
 
 ```sh
-cargo build --release --features native-view
+keynote new talk.md --title "My talk" --theme tokyo-night
+keynote check talk.md
+keynote slides talk.md
+keynote present talk.md
+keynote export talk.md talk.html
+keynote export talk.md talk.pdf
+keynote export talk.md talk.pptx
 ```
 
-That feature needs Rust 1.90 or newer, because Tauri does. The rest of the CLI builds without it.
+Help inside the editor is F1. Agents can run `keynote format` and `keynote skill`.
 
-Without the feature, `view` still parses the deck and tells you to rebuild.
+## Editor
 
-## Next milestone
+The window has Visual, Overview, Markdown, Presenter, and Present. Drag slides to reorder them. Drag the dividers to resize panes. Edits autosave. Ctrl+Z undoes, Ctrl+Y redoes, Ctrl+D duplicates.
 
-Overview grid on top of this native view. PPTX embeds per-slide PNGs + MP4s (no editable text, matching Hype's rendered-appearance contract).
+`@reveal` shows bullets one at a time in Present (Space or right arrow). Speaker notes go in `:::notes` and stay off the slide. Alignment and backgrounds are `@align`, `@valign`, and `@background`.
+
+## Format
+
+Optional frontmatter (`title`, `author`, `theme`, `font`). Slides split on a line that is exactly `---`. One image or video per slide, looked up by basename in `images/` or `videos/`:
+
+```md
+![fit](photo.jpg)
+![span loop muted](demo.mp4)
+```
+
+`keynote format` prints the full reference.
+
+## Backups
+
+`new` and `export` keep a `.bak` in `.keynote-backups/` next to the deck, and a recovery copy under `~/.local/state/keynote/recovery/`. `keynote history talk.md` lists them. `keynote restore talk.md` puts one back.

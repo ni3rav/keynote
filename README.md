@@ -41,7 +41,13 @@ Successful `new`/`export` writes timestamped `.bak` copies to `.keynote-backups/
 
 ## Native view
 
-`keynote view talk.md` opens the deck in a native window. It loads the same HTML renderer as `export` (arrow keys, Space, and the on-screen controls). Build that binary with WebKit installed:
+`keynote view talk.md` opens the deck in a native window. It loads the same HTML renderer as `export` (arrow keys, Space, and the on-screen controls). **Editor** splits the Markdown beside that preview; edits re-render as you type, and Save writes the file (a `.bak` is kept). `--editor` starts in that pane.
+
+```sh
+keynote view talk.md --editor
+```
+
+Build that binary with WebKit installed:
 
 ```sh
 cargo build --release --features native-view
@@ -53,4 +59,4 @@ Without the feature, `view` still parses the deck and tells you to rebuild.
 
 ## Next milestone
 
-Tauri Visual/Overview/Markdown editor on top of this native view. PPTX embeds per-slide PNGs + MP4s (no editable text, matching Hype's rendered-appearance contract).
+Overview grid on top of this native view. PPTX embeds per-slide PNGs + MP4s (no editable text, matching Hype's rendered-appearance contract).

@@ -126,7 +126,12 @@ enum Cmd {
     /// Present a deck in the terminal (←/→, q to quit)
     Present { file: PathBuf },
     /// Present a deck in a native window (same HTML renderer as export)
-    View { file: PathBuf },
+    View {
+        file: PathBuf,
+        /// Open the markdown editor beside the preview
+        #[arg(long)]
+        editor: bool,
+    },
 }
 
 fn main() {
@@ -425,6 +430,6 @@ fn run() -> Result<(), String> {
             let deck = deck::Deck::from_file(&file)?;
             present::present(&deck).map_err(|e| e.to_string())
         }
-        Cmd::View { file } => view::open(&file),
+        Cmd::View { file, editor } => view::open(&file, editor),
     }
 }

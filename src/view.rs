@@ -12,8 +12,15 @@ use std::path::{Path, PathBuf};
 pub struct NativeView {
     pub title: String,
     pub html: String,
+    /// Markdown source shown in the editor.
+    pub source: String,
     /// Directory media paths in the HTML are resolved against.
     pub root: PathBuf,
+    pub path: PathBuf,
+    /// Shell page (present + editor) served at `app.html`.
+    pub shell: String,
+    /// Start with the editor pane open.
+    pub editor: bool,
 }
 
 /// Bytes returned for one request against the deck.
@@ -31,15 +38,17 @@ pub struct DeckAsset {
 /// protocol handler is reached.
 pub fn native_index_url() -> &'static str {
     if cfg!(any(windows, target_os = "android")) {
-        "http://deck.localhost/index.html"
+        "http://deck.localhost/app.html"
     } else {
-        "deck://localhost/index.html"
+        "deck://localhost/app.html"
     }
 }
 
 /// Parse `file` and render it with the shared HTML exporter.
-pub fn prepare_native_view(file: &Path) -> Result<NativeView, String> {
-    let deck = Deck::from_file(file)?;
+pub fn prepare_native_view(file: &Path, editor: bool) -> Result<NativeView, String> {
+    let source = std::fs::read_to_string(file)
+        .map_err(|e| format!("read {}: {e}", file.display()))?;
+    let deck = Deck::from_markdown(&source);
     if deck.slides.is_empty() {
         return Err(format!("no slides in {}", file.display()));
     }
@@ -51,7 +60,153 @@ pub fn prepare_native_view(file: &Path) -> Result<NativeView, String> {
         .clone()
         .or_else(|| deck.slides.first().and_then(|s| s.title.clone()))
         .unwrap_or_else(|| "keynote".to_string());
-    Ok(NativeView { title, html, root })
+    let mut view = NativeView {
+        title,
+        html,
+        source,
+        root,
+        path: file.to_path_buf(),
+        shell: String::new(),
+        editor,
+    };
+    view.shell = editor_page(&view);
+    Ok(view)
+}
+
+/// Re-render `markdown` with the shared exporter.
+pub fn render_markdown(markdown: &str, root: &Path) -> Result<String, String> {
+    let deck = Deck::from_markdown(markdown);
+    if deck.slides.is_empty() {
+        return Err("no slides".into());
+    }
+    Ok(export::export_html(&deck, root, None, None))
+}
+
+/// Write `markdown` back to the deck, keeping a `.bak` of the previous file.
+pub fn save_markdown(path: &Path, markdown: &str) -> Result<(), String> {
+    if path.exists() {
+        crate::backup::backup_file(path);
+    }
+    std::fs::write(path, markdown).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+fn editor_page(view: &NativeView) -> String {
+    #[derive(serde::Serialize)]
+    struct Boot<'a> {
+        title: &'a str,
+        markdown: &'a str,
+        html: &'a str,
+        editor: bool,
+    }
+    let boot = serde_json::to_string(&Boot {
+        title: &view.title,
+        markdown: &view.source,
+        html: &view.html,
+        editor: view.editor,
+    })
+    .unwrap_or_else(|_| "{}".into())
+    .replace('<', "\\u003c");
+    let body_class = if view.editor { "editing" } else { "" };
+    let present_active = if view.editor { "" } else { " active" };
+    let edit_active = if view.editor { " active" } else { "" };
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+html,body {{ height:100%; margin:0; }}
+body {{ display:flex; flex-direction:column; background:#111; color:#eee; font-family:system-ui,sans-serif; }}
+header {{ display:flex; gap:8px; align-items:center; padding:8px 12px; background:#181818; border-bottom:1px solid #333; }}
+header strong {{ margin-right:8px; }}
+button {{ background:#2a2a2a; color:#eee; border:1px solid #444; border-radius:6px; padding:6px 12px; cursor:pointer; }}
+button.active {{ border-color:#7aa2f7; }}
+#status {{ margin-left:auto; opacity:.75; font-size:14px; }}
+#stage {{ flex:1; display:flex; min-height:0; }}
+textarea {{ display:none; width:42%; box-sizing:border-box; margin:0; border:0; border-right:1px solid #333; background:#1a1b26; color:#c0caf5; font:15px/1.45 ui-monospace,monospace; padding:16px; resize:none; }}
+iframe {{ flex:1; border:0; background:#111; width:100%; height:100%; }}
+body.editing textarea {{ display:block; }}
+</style>
+</head>
+<body class="{body_class}">
+<header>
+<strong id="title"></strong>
+<button id="present" type="button" class="{present_active}">Present</button>
+<button id="edit" type="button" class="{edit_active}">Editor</button>
+<button id="save" type="button">Save</button>
+<span id="status"></span>
+</header>
+<div id="stage">
+<textarea id="source" spellcheck="false"></textarea>
+<iframe id="preview" title="Slide preview"></iframe>
+</div>
+<script id="boot" type="application/json">{boot}</script>
+<script>
+const boot = JSON.parse(document.getElementById('boot').textContent);
+const source = document.getElementById('source');
+const preview = document.getElementById('preview');
+const status = document.getElementById('status');
+source.value = boot.markdown;
+preview.srcdoc = boot.html;
+document.getElementById('title').textContent = boot.title;
+function setMode(editing) {{
+  document.body.classList.toggle('editing', editing);
+  document.getElementById('edit').classList.toggle('active', editing);
+  document.getElementById('present').classList.toggle('active', !editing);
+  if (!editing) preview.contentWindow && preview.contentWindow.focus();
+}}
+setMode(boot.editor);
+document.getElementById('present').onclick = () => setMode(false);
+document.getElementById('edit').onclick = () => setMode(true);
+function explain(e) {{
+  if (!e) return 'error';
+  if (typeof e === 'string') return e;
+  if (e.message) return e.message;
+  try {{ return JSON.stringify(e); }} catch {{ return String(e); }}
+}}
+async function invoke(cmd, args) {{
+  if (!window.__TAURI_INTERNALS__) throw new Error('open this window with keynote view');
+  return window.__TAURI_INTERNALS__.invoke(cmd, args);
+}}
+let timer;
+source.addEventListener('input', () => {{
+  status.textContent = 'Editing';
+  clearTimeout(timer);
+  timer = setTimeout(refresh, 200);
+}});
+async function refresh() {{
+  try {{
+    preview.srcdoc = await invoke('preview_html', {{ markdown: source.value }});
+    if (status.textContent === 'Editing') status.textContent = '';
+  }} catch (e) {{ status.textContent = explain(e); }}
+}}
+async function save() {{
+  try {{
+    await invoke('save_deck', {{ markdown: source.value }});
+    status.textContent = 'Saved';
+  }} catch (e) {{ status.textContent = explain(e); }}
+}}
+document.getElementById('save').onclick = save;
+document.addEventListener('keydown', (e) => {{
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {{ e.preventDefault(); save(); }}
+}});
+</script>
+</body>
+</html>
+"#,
+        title = html_escape(&view.title),
+        body_class = body_class,
+        present_active = present_active,
+        edit_active = edit_active,
+        boot = boot,
+    )
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Serve the rendered deck or a file under its root. `..` is rejected.
@@ -59,6 +214,15 @@ pub fn prepare_native_view(file: &Path) -> Result<NativeView, String> {
 /// seeks with it.
 pub fn deck_asset(view: &NativeView, request_path: &str, range: Option<&str>) -> DeckAsset {
     let rel = request_rel(request_path);
+    if rel == "app.html" {
+        return DeckAsset {
+            status: 200,
+            content_type: "text/html; charset=utf-8",
+            content_range: None,
+            accept_ranges: false,
+            body: view.shell.as_bytes().to_vec(),
+        };
+    }
     if rel.is_empty() || rel == "index.html" {
         return DeckAsset {
             status: 200,
@@ -85,8 +249,8 @@ pub fn deck_asset(view: &NativeView, request_path: &str, range: Option<&str>) ->
 }
 
 /// Open `file` in a native window.
-pub fn open(file: &Path) -> Result<(), String> {
-    let view = prepare_native_view(file)?;
+pub fn open(file: &Path, editor: bool) -> Result<(), String> {
+    let view = prepare_native_view(file, editor)?;
     open_window(view)
 }
 
@@ -95,10 +259,14 @@ fn open_window(view: NativeView) -> Result<(), String> {
     let title = view.title.clone();
     let root = view.root.clone();
     let html = view.html.clone();
+    let shell = view.shell.clone();
+    let path = view.path.clone();
     let url: url::Url = native_index_url()
         .parse()
         .map_err(|e| format!("view url: {e}"))?;
     tauri::Builder::default()
+        .manage(EditorState { path, root: root.clone() })
+        .invoke_handler(tauri::generate_handler![preview_html, save_deck])
         .register_uri_scheme_protocol("deck", move |_ctx, request| {
             let range = request
                 .headers()
@@ -109,7 +277,11 @@ fn open_window(view: NativeView) -> Result<(), String> {
                 &NativeView {
                     title: String::new(),
                     html: html.clone(),
+                    source: String::new(),
                     root: root.clone(),
+                    path: PathBuf::new(),
+                    shell: shell.clone(),
+                    editor: false,
                 },
                 request.uri().path(),
                 range.as_deref(),
@@ -133,12 +305,30 @@ fn open_window(view: NativeView) -> Result<(), String> {
         .setup(move |app| {
             tauri::WebviewWindowBuilder::new(app, "view", tauri::WebviewUrl::External(url))
                 .title(title)
-                .inner_size(1280.0, 720.0)
+                .inner_size(1440.0, 810.0)
                 .build()?;
             Ok(())
         })
         .run(tauri::generate_context!())
         .map_err(|e| e.to_string())
+}
+
+#[cfg(feature = "native-view")]
+struct EditorState {
+    path: PathBuf,
+    root: PathBuf,
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn preview_html(markdown: String, state: tauri::State<'_, EditorState>) -> Result<String, String> {
+    render_markdown(&markdown, &state.root)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn save_deck(markdown: String, state: tauri::State<'_, EditorState>) -> Result<(), String> {
+    save_markdown(&state.path, &markdown)
 }
 
 #[cfg(not(feature = "native-view"))]
@@ -325,7 +515,7 @@ mod tests {
     #[test]
     fn index_url_addresses_the_deck_scheme() {
         let url = native_index_url();
-        assert!(url.ends_with("/index.html"), "{url}");
+        assert!(url.ends_with("/app.html"), "{url}");
         assert!(url.contains("deck"), "{url}");
     }
 
@@ -337,7 +527,7 @@ mod tests {
             &dir,
             "---\ntitle: Native\ntheme: paper\n---\n\n# Hello view\n\n---\n\n## Next\n",
         );
-        let view = prepare_native_view(&path).unwrap();
+        let view = prepare_native_view(&path, false).unwrap();
         assert_eq!(view.title, "Native");
         assert!(view.html.contains("Hello view"), "{}", view.html);
         assert!(view.html.contains("class=\"slide\""));
@@ -350,7 +540,7 @@ mod tests {
         let dir = std::env::temp_dir().join("keynote-view-empty");
         let _ = std::fs::remove_dir_all(&dir);
         let path = write_deck(&dir, "");
-        let err = prepare_native_view(&path).unwrap_err();
+        let err = prepare_native_view(&path, false).unwrap_err();
         assert!(err.contains("no slides"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -362,7 +552,7 @@ mod tests {
         let path = write_deck(&dir, "---\ntitle: Media\n---\n\n# Slide\n\n![](pic.png)\n");
         std::fs::create_dir_all(dir.join("images")).unwrap();
         std::fs::write(dir.join("images").join("pic.png"), b"PNGDATA").unwrap();
-        let view = prepare_native_view(&path).unwrap();
+        let view = prepare_native_view(&path, true).unwrap();
 
         let index = deck_asset(&view, "/", None);
         assert_eq!(index.status, 200);
@@ -394,10 +584,32 @@ mod tests {
         assert_eq!(deck_asset(&view, "/../Cargo.toml", None).status, 403);
         assert_eq!(deck_asset(&view, "/%2e%2e/Cargo.toml", None).status, 403);
         assert_eq!(deck_asset(&view, "/images/missing.png", None).status, 404);
+        let app = deck_asset(&view, "/app.html", None);
+        let page = std::str::from_utf8(&app.body).unwrap();
+        assert!(page.contains("id=\"edit\""));
+        assert!(page.contains(">Editor<"));
+        assert!(page.contains("class=\"editing\""));
+        assert!(page.contains("# Slide"));
         assert_eq!(
             deck_asset(&view, "/images/pic.png", Some("bytes=99-100")).status,
             416
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_and_rerender_roundtrip() {
+        let dir = std::env::temp_dir().join("keynote-view-save");
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = write_deck(&dir, "---\ntitle: Old\n---\n\n# Old title\n");
+        save_markdown(&path, "---\ntitle: New\n---\n\n# New title\n").unwrap();
+        let view = prepare_native_view(&path, true).unwrap();
+        assert_eq!(view.path, path);
+        assert_eq!(view.title, "New");
+        assert!(view.html.contains("New title"), "{}", view.html);
+        let html = render_markdown("# Just this\n", &dir).unwrap();
+        assert!(html.contains("Just this"), "{html}");
+        assert!(render_markdown("", &dir).unwrap_err().contains("no slides"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -407,7 +619,7 @@ mod tests {
         let dir = std::env::temp_dir().join("keynote-view-nofeature");
         let _ = std::fs::remove_dir_all(&dir);
         let path = write_deck(&dir, "# Only\n");
-        let err = open(&path).unwrap_err();
+        let err = open(&path, false).unwrap_err();
         assert!(err.contains("native-view"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -2,5 +2,5 @@
   "identifier": "view",
   "description": "Native slide view window",
   "windows": ["view"],
-  "permissions": []
+  "permissions": ["allow-preview-html", "allow-save-deck"]
 }

@@ -82,6 +82,52 @@ pub fn render_markdown(markdown: &str, root: &Path) -> Result<String, String> {
     Ok(export::export_html(&deck, root, None, None))
 }
 
+/// Files written by one export, and formats left out because a program is missing.
+#[derive(Debug, serde::Serialize)]
+pub struct ExportAllOutcome {
+    pub written: Vec<String>,
+    pub skipped: Vec<export::FormatStatus>,
+}
+
+/// Write every export format this machine can produce into `dir`, using `stem` as the file name.
+/// Deck errors block the write. Formats whose program is missing are skipped.
+pub fn export_all(markdown: &str, root: &Path, dir: &Path, stem: &str) -> Result<ExportAllOutcome, String> {
+    let deck = Deck::from_markdown(markdown);
+    if deck.slides.is_empty() {
+        return Err("no slides".into());
+    }
+    let diagnostics = crate::deck::check_deck(&deck, root);
+    let errors = diagnostics.iter().filter(|d| d.severity == "error").count();
+    if errors > 0 {
+        return Err(format!(
+            "export blocked: {errors} error(s); finish code fences and fix media first"
+        ));
+    }
+    write_available(&deck, root, dir, stem, &export::system_health().formats)
+}
+
+fn write_available(
+    deck: &Deck,
+    root: &Path,
+    dir: &Path,
+    stem: &str,
+    formats: &[export::FormatStatus],
+) -> Result<ExportAllOutcome, String> {
+    std::fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let mut written = Vec::new();
+    let mut skipped = Vec::new();
+    for format in formats {
+        if !format.available {
+            skipped.push(format.clone());
+            continue;
+        }
+        let path = dir.join(format!("{stem}.{}", format.id));
+        export::write_export(deck, root, &path, None, None, 1920)?;
+        written.push(path.display().to_string());
+    }
+    Ok(ExportAllOutcome { written, skipped })
+}
+
 /// Write `markdown` back to the deck, keeping a `.bak` of the previous file.
 pub fn save_markdown(path: &Path, markdown: &str) -> Result<(), String> {
     if path.exists() {
@@ -512,6 +558,8 @@ fn open_window(view: NativeView) -> Result<(), String> {
         .invoke_handler(tauri::generate_handler![
             preview_html,
             save_deck,
+            check_health,
+            export_slides,
             render_deck,
             move_slide,
             replace_slide,
@@ -621,6 +669,33 @@ fn preview_html(markdown: String, state: tauri::State<'_, EditorState>) -> Resul
 #[tauri::command]
 fn save_deck(markdown: String, state: tauri::State<'_, EditorState>) -> Result<(), String> {
     save_markdown(&state.path, &markdown)
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn check_health() -> export::SystemHealth {
+    export::system_health()
+}
+
+#[cfg(feature = "native-view")]
+#[tauri::command]
+fn export_slides(
+    markdown: String,
+    state: tauri::State<'_, EditorState>,
+) -> Result<ExportAllOutcome, String> {
+    let stem = state
+        .path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("deck");
+    let dir = rfd::FileDialog::new()
+        .set_title("Export every available format")
+        .set_directory(&state.root)
+        .pick_folder()
+        .ok_or_else(|| "cancelled".to_string())?;
+    let outcome = export_all(&markdown, &state.root, &dir, stem)?;
+    crate::backup::backup_file(&state.path);
+    Ok(outcome)
 }
 
 #[cfg(feature = "native-view")]
@@ -1081,6 +1156,11 @@ mod tests {
         assert!(page.contains("mode-visual"));
         assert!(page.contains("# Slide"));
         assert!(page.contains("id=\"help-search\""));
+        assert!(page.contains("id=\"check\""));
+        assert!(page.contains("id=\"export\""));
+        assert!(page.contains("data-format=\"html\""));
+        assert!(page.contains("data-format=\"pdf\""));
+        assert!(page.contains("data-format=\"pptx\""));
         assert!(page.contains("Getting started"));
         assert!(page.contains("Start guided tour"));
         let shot = deck_asset(&view, "/help/editor.png", None);
@@ -1154,6 +1234,59 @@ mod tests {
         let deck = crate::deck::Deck::from_markdown("# Title\n\n- One\n");
         let plain = crate::export::export_html(&deck, std::path::Path::new("."), None, None);
         assert!(!plain.contains("class=\"step\""), "{plain}");
+    }
+
+    #[test]
+    fn health_lists_export_tools_and_export_writes_only_available_formats() {
+        let health = crate::export::system_health();
+        let chromium = crate::export::find_chromium().is_some();
+        let ffmpeg = crate::export::find_ffmpeg().is_some();
+        assert!(health.tools.iter().any(|t| t.id == "chromium" && t.present == chromium));
+        assert!(health.tools.iter().any(|t| t.id == "ffmpeg" && t.present == ffmpeg));
+        let html = health.formats.iter().find(|f| f.id == "html").unwrap();
+        let pdf = health.formats.iter().find(|f| f.id == "pdf").unwrap();
+        let pptx = health.formats.iter().find(|f| f.id == "pptx").unwrap();
+        assert!(html.available);
+        assert_eq!(pdf.available, chromium);
+        assert_eq!(pptx.available, chromium);
+
+        let dir = std::env::temp_dir().join("keynote-view-health");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let broken = "# Hello\n\n![](missing.png)\n";
+        let err = export_all(broken, &dir, &dir.join("out"), "talk").unwrap_err();
+        assert!(err.contains("export blocked"), "{err}");
+        assert!(!dir.join("out").join("talk.html").exists());
+
+        let clean = "# Hello\n\n---\n\n## Next\n";
+        let out = dir.join("out");
+        let formats = vec![
+            html.clone(),
+            crate::export::FormatStatus {
+                id: "pdf".into(),
+                label: "PDF".into(),
+                available: false,
+                reason: "Needs Chromium".into(),
+            },
+            crate::export::FormatStatus {
+                id: "pptx".into(),
+                label: "PPTX".into(),
+                available: false,
+                reason: "Needs Chromium".into(),
+            },
+        ];
+        let deck = crate::deck::Deck::from_markdown(clean);
+        let outcome = write_available(&deck, &dir, &out, "talk", &formats).unwrap();
+        assert!(outcome.written.iter().any(|p| p.ends_with("talk.html")));
+        let html_body = std::fs::read_to_string(out.join("talk.html")).unwrap();
+        assert!(html_body.contains("Hello"), "{html_body}");
+        assert!(html_body.contains("Next"), "{html_body}");
+        assert!(outcome.skipped.iter().any(|f| f.id == "pdf"));
+        assert!(outcome.skipped.iter().any(|f| f.id == "pptx"));
+        assert!(!out.join("talk.pdf").exists());
+        assert!(!out.join("talk.pptx").exists());
+        assert!(export_all("", &dir, &out, "talk").unwrap_err().contains("no slides"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

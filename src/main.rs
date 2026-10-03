@@ -351,27 +351,7 @@ fn run() -> Result<(), String> {
             for d in diags.iter().filter(|d| d.severity == "warning") {
                 eprintln!("warning {} slide {}: {}", d.code, d.slide, d.message);
             }
-            let ext = output.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-            if ext == "pdf" {
-                let html = export::export_html(&deck, &base, title, theme);
-                let tmp_html = std::env::temp_dir().join("keynote-export.html");
-                let tmp_pdf = std::env::temp_dir().join("keynote-export.pdf");
-                std::fs::write(&tmp_html, html).map_err(|e| format!("write tmp: {e}"))?;
-                export::print_pdf(&tmp_html, &tmp_pdf)?;
-                // Never clobber on failure: we only reach here on success.
-                std::fs::copy(&tmp_pdf, &output)
-                    .map_err(|e| format!("write {}: {e}", output.display()))?;
-            } else if ext == "pptx" {
-                let bytes = pptx::export_pptx(&deck, &base, width)?;
-                let tmp = output.with_extension("tmp.pptx");
-                std::fs::write(&tmp, &bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-                std::fs::rename(&tmp, &output).map_err(|e| format!("write {}: {e}", output.display()))?;
-            } else {
-                let html = export::export_html(&deck, &base, title, theme);
-                let tmp = output.with_extension("tmp.html");
-                std::fs::write(&tmp, &html).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-                std::fs::rename(&tmp, &output).map_err(|e| format!("write {}: {e}", output.display()))?;
-            }
+            export::write_export(&deck, &base, &output, title, theme, width)?;
             backup::backup_file(&file);
             println!("exported {} slides → {}", deck.slides.len(), output.display());
             Ok(())

@@ -317,23 +317,123 @@ body {{ --font:{font}; }}
     )
 }
 
-pub fn find_chromium() -> Option<PathBuf> {
-    for name in [
-        "chromium-browser",
-        "chromium",
-        "google-chrome",
-        "google-chrome-stable",
-    ] {
-        if let Ok(paths) = std::env::var("PATH") {
-            for dir in std::env::split_paths(&paths) {
-                let cand = dir.join(name);
-                if cand.exists() {
-                    return Some(cand);
-                }
+pub fn find_on_path(names: &[&str]) -> Option<PathBuf> {
+    let Ok(paths) = std::env::var("PATH") else {
+        return None;
+    };
+    for dir in std::env::split_paths(&paths) {
+        for name in names {
+            let cand = dir.join(name);
+            if cand.exists() {
+                return Some(cand);
             }
         }
     }
     None
+}
+
+pub fn find_chromium() -> Option<PathBuf> {
+    find_on_path(&[
+        "chromium-browser",
+        "chromium",
+        "google-chrome",
+        "google-chrome-stable",
+    ])
+}
+
+pub fn find_ffmpeg() -> Option<PathBuf> {
+    find_on_path(&["ffmpeg", "ffmpeg.exe"])
+}
+
+/// One program the export path may call.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ToolStatus {
+    pub id: String,
+    pub name: String,
+    pub present: bool,
+    pub path: String,
+    pub used_by: String,
+}
+
+/// One export format, and whether this machine can write it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FormatStatus {
+    pub id: String,
+    pub label: String,
+    pub available: bool,
+    pub reason: String,
+}
+
+/// Programs required to export, and which formats that makes possible.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SystemHealth {
+    pub tools: Vec<ToolStatus>,
+    pub formats: Vec<FormatStatus>,
+}
+
+/// Look up Chromium and ffmpeg. HTML needs neither. PDF and PPTX need Chromium.
+/// ffmpeg is required only to embed video that is not already MP4.
+pub fn system_health() -> SystemHealth {
+    let chromium = find_chromium();
+    let ffmpeg = find_ffmpeg();
+    let chromium_path = chromium
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let ffmpeg_path = ffmpeg
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let pdf_reason = if chromium.is_some() {
+        "Ready".to_string()
+    } else {
+        "Needs Chromium (chromium or google-chrome) on PATH".to_string()
+    };
+    let pptx_reason = if chromium.is_none() {
+        "Needs Chromium (chromium or google-chrome) on PATH".to_string()
+    } else if ffmpeg.is_none() {
+        "Ready. Video that is not already MP4 is left out until ffmpeg is installed".to_string()
+    } else {
+        "Ready".to_string()
+    };
+    SystemHealth {
+        tools: vec![
+            ToolStatus {
+                id: "chromium".into(),
+                name: "Chromium".into(),
+                present: chromium.is_some(),
+                path: chromium_path,
+                used_by: "PDF export, PPTX slide images, and PNG render".into(),
+            },
+            ToolStatus {
+                id: "ffmpeg".into(),
+                name: "ffmpeg".into(),
+                present: ffmpeg.is_some(),
+                path: ffmpeg_path,
+                used_by: "PPTX video that is not already MP4, and animated GIF or WebP".into(),
+            },
+        ],
+        formats: vec![
+            FormatStatus {
+                id: "html".into(),
+                label: "HTML".into(),
+                available: true,
+                reason: "Ready. No extra program.".into(),
+            },
+            FormatStatus {
+                id: "pdf".into(),
+                label: "PDF".into(),
+                available: chromium.is_some(),
+                reason: pdf_reason,
+            },
+            FormatStatus {
+                id: "pptx".into(),
+                label: "PPTX".into(),
+                available: chromium.is_some(),
+                reason: pptx_reason,
+            },
+        ],
+    }
 }
 
 pub fn screenshot_png(html_file: &Path, png_file: &Path, width: u32) -> Result<(), String> {
@@ -359,6 +459,41 @@ pub fn screenshot_png(html_file: &Path, png_file: &Path, width: u32) -> Result<(
     }
     if !png_file.exists() {
         return Err("chromium did not write PNG".into());
+    }
+    Ok(())
+}
+
+/// Write `deck` to `output`. `.pdf` prints via Chromium, `.pptx` builds a
+/// slide deck, and every other extension is animated HTML.
+pub fn write_export(
+    deck: &Deck,
+    base_dir: &Path,
+    output: &Path,
+    title: Option<String>,
+    theme: Option<String>,
+    width: u32,
+) -> Result<(), String> {
+    let ext = output
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if ext == "pdf" {
+        let html = export_html(deck, base_dir, title, theme);
+        let tmp_html = std::env::temp_dir().join("keynote-export.html");
+        let tmp_pdf = std::env::temp_dir().join("keynote-export.pdf");
+        std::fs::write(&tmp_html, html).map_err(|e| format!("write tmp: {e}"))?;
+        print_pdf(&tmp_html, &tmp_pdf)?;
+        std::fs::copy(&tmp_pdf, output).map_err(|e| format!("write {}: {e}", output.display()))?;
+    } else if ext == "pptx" {
+        let bytes = crate::pptx::export_pptx(deck, base_dir, width)?;
+        let tmp = output.with_extension("tmp.pptx");
+        std::fs::write(&tmp, &bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, output).map_err(|e| format!("write {}: {e}", output.display()))?;
+    } else {
+        let html = export_html(deck, base_dir, title, theme);
+        let tmp = output.with_extension("tmp.html");
+        std::fs::write(&tmp, &html).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, output).map_err(|e| format!("write {}: {e}", output.display()))?;
     }
     Ok(())
 }

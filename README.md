@@ -13,10 +13,12 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
 Build, install, and open:
 
 ```sh
-cargo build --release --features native-view
+./scripts/build.sh
 ./target/release/keynote install
 keynote
 ```
+
+`scripts/build.sh` runs `cargo build --release --features native-view` and prints the binary path.
 
 `keynote install` copies the binary to `~/.local/bin/keynote` and adds a desktop launcher. If `keynote` is not found, add this to your shell profile:
 
@@ -57,7 +59,7 @@ Help inside the editor is F1. Agents can run `keynote format` and `keynote skill
 
 ## Editor
 
-The window has Visual, Overview, Markdown, Presenter, and Present. Drag slides to reorder them. Drag the dividers to resize panes. Edits autosave. Ctrl+Z undoes, Ctrl+Y redoes, Ctrl+D duplicates.
+The window has Visual, Overview, Markdown, Presenter, and Present. Drag slides to reorder them. Drag the dividers to resize panes. Edits autosave. Ctrl+Z undoes, Ctrl+Y redoes, Ctrl+D duplicates. Check looks for Chromium and ffmpeg. Export writes every format those programs allow into a folder you pick. HTML is always available. PDF and PPTX are disabled when Chromium is missing. Deck problems still block the export; `keynote check` lists them.
 
 `@reveal` shows bullets one at a time in Present (Space or right arrow). Speaker notes go in `:::notes` and stay off the slide. Alignment and backgrounds are `@align`, `@valign`, and `@background`.
 

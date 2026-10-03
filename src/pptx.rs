@@ -2,20 +2,8 @@ use crate::deck::{resolve_media, Deck};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-fn ffmpeg() -> Option<PathBuf> {
-    for dir in std::env::split_paths(&std::env::var("PATH").unwrap_or_default()) {
-        for name in ["ffmpeg", "ffmpeg.exe"] {
-            let c = dir.join(name);
-            if c.exists() {
-                return Some(c);
-            }
-        }
-    }
-    None
-}
-
 fn convert_to_mp4(src: &Path) -> Option<PathBuf> {
-    let ff = ffmpeg()?;
+    let ff = crate::export::find_ffmpeg()?;
     let out = std::env::temp_dir().join(format!(
         "keynote-conv-{}.mp4",
         std::time::SystemTime::now()

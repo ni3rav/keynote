@@ -39,7 +39,7 @@ header {
 }
 .brand { font-weight: 600; color: var(--fg-bright); letter-spacing: .01em; margin-right: 8px; }
 .modes { display: flex; height: 100%; }
-.modes button, #save, #format button {
+.modes button, #format button {
   background: transparent;
   color: var(--muted);
   border: 0;
@@ -51,18 +51,31 @@ header {
   font: inherit;
 }
 .modes button.active { color: var(--fg-bright); border-bottom-color: var(--accent); }
-#save {
+#actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#actions button {
   height: 28px;
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  border-bottom: 1px solid var(--line);
+  background: transparent;
   color: var(--fg-bright);
+  cursor: pointer;
+  font: inherit;
 }
-#save:hover, #format button:hover, .modes button:hover, #slide-tools button:hover, .media-row button:hover { color: var(--fg-bright); }
+#actions button:hover, #format button:hover, .modes button:hover, #slide-tools button:hover, .media-row button:hover { color: var(--fg-bright); }
+.format-flag {
+  font-size: 12px;
+  color: var(--fg-bright);
+  padding: 0 2px;
+}
+.format-flag.off { color: var(--muted); text-decoration: line-through; }
 button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-#status { min-width: 72px; text-align: right; color: var(--muted); font-size: 13px; }
+#status { min-width: 72px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; color: var(--muted); font-size: 13px; }
 #format {
   display: flex;
   gap: 2px;
@@ -247,6 +260,49 @@ body.mode-help #help { display: block; }
 #tour-card .row { display: flex; gap: 8px; }
 #tour-card button { border: 1px solid var(--line); background: transparent; color: var(--fg-bright); border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; }
 .tour-target { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+#health {
+  position: fixed;
+  z-index: 16;
+  top: 52px;
+  right: 12px;
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-light);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.45);
+}
+#health[hidden] { display: none; }
+#health .bar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+#health .bar strong { color: var(--fg-bright); font-size: 13px; }
+#health .bar button {
+  margin-left: auto;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-bright);
+  cursor: pointer;
+  font: inherit;
+}
+#health-list { overflow: auto; margin: 0; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+#health-list .diag {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--bg-dark);
+  color: var(--fg);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+}
+#health-list .diag.missing { border-color: #f7768e; }
+#health-list .diag.present { border-color: #9ece6a; }
+#health-list .row-note { margin: 0; }
 @media (max-width: 800px) {
   header { height: auto; flex-wrap: wrap; padding: 6px 8px; }
   .modes { width: 100%; overflow-x: auto; }
@@ -267,7 +323,16 @@ body.mode-help #help { display: block; }
     <button type="button" data-mode="present" title="Audience view">Present</button>
     <button type="button" data-mode="help" title="Help and user guide (F1)">Help</button>
   </nav>
-  <button id="save" type="button">Save</button>
+  <div id="actions">
+    <button id="check" type="button" title="Check that Chromium and ffmpeg are installed">Check</button>
+    <span id="formats" aria-label="Export formats">
+      <span class="format-flag" data-format="html">HTML</span>
+      <span class="format-flag" data-format="pdf">PDF</span>
+      <span class="format-flag" data-format="pptx">PPTX</span>
+    </span>
+    <button id="export" type="button" title="Export every format this machine can write">Export</button>
+    <button id="save" type="button">Save</button>
+  </div>
   <span id="status"></span>
 </header>
 <div id="format">
@@ -318,6 +383,13 @@ body.mode-help #help { display: block; }
     <article id="help-doc" tabindex="-1" aria-live="polite"></article>
   </div>
 </div>
+<div id="health" hidden role="dialog" aria-labelledby="health-title">
+  <div class="bar">
+    <strong id="health-title">Health check</strong>
+    <button type="button" id="health-close">Close</button>
+  </div>
+  <div id="health-list"></div>
+</div>
 <div id="tour" hidden role="dialog" aria-modal="true" aria-labelledby="tour-title">
   <div id="tour-card">
     <h2 id="tour-title"></h2>
@@ -366,7 +438,10 @@ async function invoke(cmd, args) {
   if (!window.__TAURI_INTERNALS__) throw new Error('open this window with keynote view');
   return window.__TAURI_INTERNALS__.invoke(cmd, args);
 }
-function setStatus(text) { status.textContent = text || ''; }
+function setStatus(text) {
+  status.textContent = text || '';
+  status.title = text || '';
+}
 
 function paint() {
   if (current >= slides.length) current = Math.max(0, slides.length - 1);
@@ -553,6 +628,69 @@ async function save() {
   } catch (e) { setStatus(explain(e)); }
 }
 document.getElementById('save').onclick = save;
+const healthEl = document.getElementById('health');
+function paintFormats(report) {
+  document.querySelectorAll('.format-flag').forEach((el) => {
+    const fmt = (report.formats || []).find((f) => f.id === el.dataset.format);
+    if (!fmt) return;
+    el.classList.toggle('off', !fmt.available);
+    el.title = fmt.label + ': ' + fmt.reason;
+  });
+  const off = (report.formats || []).filter((f) => !f.available).map((f) => f.label);
+  const exportBtn = document.getElementById('export');
+  exportBtn.title = off.length
+    ? 'Export every available format. Disabled: ' + off.join(', ')
+    : 'Export HTML, PDF, and PPTX';
+}
+function renderHealth(report) {
+  paintFormats(report);
+  const list = document.getElementById('health-list');
+  list.replaceChildren();
+  const intro = document.createElement('p');
+  intro.className = 'hint row-note';
+  intro.textContent = 'Programs this machine needs for export and render.';
+  list.append(intro);
+  (report.tools || []).forEach((tool) => {
+    const row = document.createElement('div');
+    row.className = 'diag ' + (tool.present ? 'present' : 'missing');
+    const where = tool.present ? tool.path : 'not on PATH';
+    row.textContent = tool.name + ' — ' + where + '. ' + tool.used_by + '.';
+    list.append(row);
+  });
+  (report.formats || []).forEach((fmt) => {
+    const row = document.createElement('div');
+    row.className = 'diag ' + (fmt.available ? 'present' : 'missing');
+    row.textContent = fmt.label + ' — ' + (fmt.available ? 'enabled. ' : 'disabled. ') + fmt.reason;
+    list.append(row);
+  });
+}
+document.getElementById('check').onclick = async () => {
+  try {
+    const report = await invoke('check_health', {});
+    renderHealth(report);
+    healthEl.hidden = false;
+    const missing = (report.tools || []).filter((t) => !t.present).map((t) => t.name);
+    setStatus(missing.length ? 'Missing ' + missing.join(', ') : 'Ready to export');
+  } catch (e) { setStatus(explain(e)); }
+};
+document.getElementById('health-close').onclick = () => { healthEl.hidden = true; };
+document.getElementById('export').onclick = async () => {
+  setStatus('Exporting…');
+  try {
+    const result = await invoke('export_slides', { markdown });
+    const n = (result.written || []).length;
+    const skipped = (result.skipped || []).map((s) => s.label);
+    setStatus(skipped.length
+      ? 'Exported ' + n + ' file(s). Disabled: ' + skipped.join(', ')
+      : 'Exported ' + n + ' file(s)');
+  } catch (err) {
+    if (explain(err) !== 'cancelled') setStatus(explain(err));
+    else setStatus('');
+  }
+};
+if (window.__TAURI_INTERNALS__) {
+  invoke('check_health', {}).then(paintFormats).catch(() => {});
+}
 document.getElementById('dup').onclick = () => changeDeck(() => invoke('duplicate_slide', { markdown, index: current }));
 document.getElementById('del').onclick = () => changeDeck(() => invoke('delete_slide', { markdown, index: current }));
 document.getElementById('add-image').onclick = () => changeDeck(() => invoke('insert_media', { markdown, index: current, kind: 'image' }));
@@ -683,6 +821,8 @@ const helpTopics = [
     html: '<ol><li>Select the slide.</li><li>Type in Speaker notes. The words are stored in a <code>:::notes</code> block and are not drawn on the slide.</li><li>Open Presenter to read them beside the slide.</li><li>Reorder, duplicate, or delete the slide and the notes go with it.</li><li>In an exported HTML deck, press <kbd>n</kbd> to show or hide notes.</li></ol>' },
   { id: 'media', cat: 'Media', title: 'Images, video, and backgrounds',
     html: '<ol><li>Select the slide and choose Image or Video. The file is copied into <code>images/</code> or <code>videos/</code>.</li><li>Or drop a file onto the window. It attaches to the current slide.</li><li>Fit shows the whole picture. Span fills the slide.</li><li>A slide holds one image or video. Inserting another replaces it.</li><li>Background accepts <code>#112233</code>, <code>gradient=#111111,#333333</code>, or <code>image=photo.jpg</code>.</li></ol><p>Remote video addresses are not embedded. Use a local file.</p>' },
+  { id: 'export', cat: 'Sharing', title: 'Health check and export',
+    html: '<ol><li>Check looks on this computer for Chromium and ffmpeg. Chromium is required for PDF, PPTX, and PNG render. ffmpeg is required to put video that is not already MP4, or an animated GIF or WebP, into a PPTX file.</li><li>HTML, PDF, and PPTX sit beside Export. A format with a line through it is disabled because its program is missing.</li><li>Export writes every enabled format into a folder you choose. The names follow the deck file: <code>talk.html</code>, <code>talk.pdf</code>, and <code>talk.pptx</code>.</li><li>HTML is the animated deck and needs no extra program. PDF is a static print. PPTX is slide images plus video.</li><li>Deck errors, such as a missing image or an unfinished code fence, still block the export. <code>keynote check talk.md</code> lists those.</li></ol>' },
   { id: 'keys', cat: 'Shortcuts', title: 'Keyboard',
     html: '<ul><li><kbd>Ctrl</kbd>+<kbd>S</kbd> save</li><li><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Ctrl</kbd>+<kbd>Y</kbd> redo</li><li><kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate the slide</li><li><kbd>F1</kbd> help</li><li>In Visual or Overview, arrow keys change the selected slide when you are not typing.</li><li>In Present, arrows, Space, and Enter advance. <kbd>n</kbd> toggles notes in an exported HTML file.</li></ul>' }
 ];
@@ -770,6 +910,11 @@ document.getElementById('tour-skip').onclick = () => { endTour(); setMode('help'
 document.addEventListener('keydown', (e) => {
   if (document.getElementById('tour').hidden) return;
   if (e.key === 'Escape') { e.preventDefault(); endTour(); }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !healthEl.hidden && document.getElementById('tour').hidden) {
+    healthEl.hidden = true;
+  }
 });
 
 sourceEl.value = markdown;
